@@ -114,6 +114,11 @@ fn main() {
             app_lib::commands::rag::list_rag_documents,
             app_lib::commands::rag::delete_rag_document,
             app_lib::commands::rag::enrich_rag_documents,
+            // RAPTOR commands
+            app_lib::commands::rag::build_raptor_tree,
+            app_lib::commands::rag::has_raptor_tree,
+            app_lib::commands::rag::delete_raptor_tree,
+            app_lib::commands::rag::query_rag_with_raptor,
         ])
         .build(tauri::generate_context!())
         .expect("error building tauri app")

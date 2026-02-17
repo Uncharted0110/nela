@@ -573,4 +573,113 @@ impl RagPipeline {
 
         Ok(results)
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Phase 3: RAPTOR Tree Building (On-Demand)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Build a RAPTOR tree for a specific document.
+    /// This is an on-demand operation, typically triggered manually or when
+    /// retrieval confidence is low.
+    pub async fn build_raptor_tree(
+        &self,
+        doc_id: i64,
+    ) -> Result<crate::rag::raptor::RaptorTreeStatus, String> {
+        use crate::rag::raptor;
+        raptor::build_raptor_tree(self.db.clone(), self.router.clone(), doc_id).await
+    }
+
+    /// Check if a document has a RAPTOR tree.
+    pub fn has_raptor_tree(&self, doc_id: i64) -> Result<bool, String> {
+        self.db.has_raptor_tree(doc_id)
+    }
+
+    /// Delete the RAPTOR tree for a document.
+    pub async fn delete_raptor_tree(&self, doc_id: i64) -> Result<(), String> {
+        self.db.delete_raptor_nodes(doc_id)
+    }
+
+    /// Retrieve using RAPTOR tree with confidence-aware traversal.
+    /// Falls back to standard retrieval if no RAPTOR tree exists.
+    pub async fn query_with_raptor(
+        &self,
+        doc_id: i64,
+        user_query: &str,
+        top_k: usize,
+    ) -> Result<RagResult, String> {
+        use crate::rag::raptor;
+
+        // Check if RAPTOR tree exists
+        if !self.has_raptor_tree(doc_id)? {
+            log::info!("No RAPTOR tree for doc {}, using standard retrieval", doc_id);
+            return self.query(user_query, top_k).await;
+        }
+
+        // Retrieve using RAPTOR with confidence-aware traversal
+        let raptor_results = raptor::raptor_retrieve(
+            self.db.clone(),
+            self.router.clone(),
+            doc_id,
+            user_query,
+            top_k,
+            None, // Use default confidence threshold
+        )
+        .await?;
+
+        if raptor_results.is_empty() {
+            return Ok(RagResult {
+                answer: "No relevant information found in the RAPTOR tree.".to_string(),
+                sources: vec![],
+            });
+        }
+
+        // Convert RAPTOR results to SourceChunk format
+        let mut sources: Vec<SourceChunk> = Vec::new();
+        for (chunk_id, score, text) in raptor_results {
+            let doc_title = self
+                .db
+                .doc_title_for_chunk(chunk_id)
+                .unwrap_or_else(|_| "RAPTOR Summary".to_string());
+
+            sources.push(SourceChunk {
+                chunk_id,
+                doc_title,
+                text,
+                score,
+            });
+        }
+
+        // Build augmented prompt
+        let context = sources
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                format!(
+                    "[Source {} — {}]\n{}",
+                    i + 1,
+                    s.doc_title,
+                    s.text
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        let augmented_prompt = format!(
+            "Use the following context to answer the question. \
+             Cite sources using [Source N] when referencing specific information.\n\n\
+             Context:\n{context}\n\n\
+             Question: {user_query}\n\n\
+             Answer:"
+        );
+
+        // Generate answer via LLM
+        let chat_request = tasks::chat_request(&augmented_prompt);
+        let answer = match self.router.route(&chat_request).await {
+            Ok(TaskResponse::Text(text)) => text,
+            Ok(_) => "Failed to generate answer: unexpected response type".to_string(),
+            Err(e) => format!("Failed to generate answer: {e}"),
+        };
+
+        Ok(RagResult { answer, sources })
+    }
 }

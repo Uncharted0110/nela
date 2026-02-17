@@ -112,6 +112,7 @@ impl RagDb {
         };
 
         db.create_tables()?;
+        db.create_raptor_tables()?;
         Ok(db)
     }
 

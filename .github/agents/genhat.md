@@ -13,12 +13,12 @@ GenHat is a **cross-platform desktop application** that runs LLM inference, RAG,
 - **Tauri v2** (Rust backend + webview frontend)
 - **React + TypeScript** (via Vite)
 - **llama.cpp** (`llama-server` + `llama-mtmd-cli` + `whisper.cpp` binaries) for LLM / VLM / STT
-- **ONNX Runtime** (statically linked via `ort` crate) for DistilBERT query classification
+- **ONNX Runtime** (statically linked via `ort` crate) for DistilBERT query classification + ms-marco cross-encoder relevance grading
 - **GGUF model format** for quantized language/vision/embedding/STT models
-- **ONNX model format** for the fine-tuned DistilBERT query router
-- **Full on-device RAG pipeline** with BM25, vector search, RRF fusion, RAPTOR trees, LLM enrichment
+- **ONNX model format** for the fine-tuned DistilBERT query router + ms-marco-MiniLM-L6-v2 cross-encoder grader
+- **Full on-device RAG pipeline** with BM25, vector search, RRF fusion, RAPTOR trees, LLM enrichment, cross-encoder grading
 
-The Rust backend is a modular, multi-model **process control system** (`~8000 LOC across 36 files`). Models are defined declaratively in `models.toml`, lazily spawned on first request, and managed by a central `ProcessManager` with health checks, idle reaping, and graceful shutdown.
+The Rust backend is a modular, multi-model **process control system** (`~8200 LOC across 37 files`). Models are defined declaratively in `models.toml`, lazily spawned on first request, and managed by a central `ProcessManager` with health checks, idle reaping, and graceful shutdown.
 
 ---
 
@@ -51,6 +51,14 @@ GenHat-The-Local-Intelligence-Engine/
 │   │       ├── tokenizer_config.json
 │   │       ├── vocab.txt
 │   │       └── special_tokens_map.json
+│   ├── grader/
+│   │   └── ms-marco-MiniLM-L6-v2-onnx-int8/
+│   │       ├── model_quantized.onnx ← Cross-encoder ONNX model (~80 MB INT8)
+│   │       ├── config.json          ← HuggingFace config
+│   │       ├── tokenizer.json       ← WordPiece tokenizer
+│   │       ├── tokenizer_config.json
+│   │       ├── vocab.txt
+│   │       └── special_tokens_map.json
 │   ├── tts-chatterbox-q4-k-m/
 │   │   ├── s3gen-bf16.gguf          ← TTS synthesis model
 │   │   ├── t3_cfg-q4_k_m.gguf      ← TTS config model
@@ -76,9 +84,16 @@ GenHat-The-Local-Intelligence-Engine/
     ├── index.html                ← Main HTML shell (full UI layout)
     ├── src/                      ← Frontend source (TypeScript/React)
     │   ├── main.tsx              ← React entry point (10 lines)
-    │   ├── App.tsx               ← React App component (628 lines)
-    │   ├── App.css               ← Component styles (42 lines)
-    │   └── index.css             ← Global styles (68 lines)
+    │   ├── App.tsx               ← Main app with 4 chat modes (850+ lines)
+    │   ├── App.css               ← Component styles (180+ lines)
+    │   ├── index.css             ← Global styles (68 lines)
+    │   ├── types.ts              ← TypeScript type definitions (180+ lines)
+    │   ├── api.ts                ← Centralized API layer (420+ lines)
+    │   └── components/
+    │       ├── ChatWindow.tsx    ← Chat UI component (130+ lines)
+    │       ├── ModelSelector.tsx ← Model selection UI (80+ lines)
+    │       ├── ModelSelector.css ← ModelSelector styles
+    │       └── Sidebar.tsx       ← Sidebar navigation
     │
     └── src-tauri/                ← Rust backend (Tauri)
         ├── Cargo.toml            ← Rust dependencies
@@ -88,7 +103,7 @@ GenHat-The-Local-Intelligence-Engine/
         │   └── default.json      ← Tauri permissions
         ├── icons/                ← App icons (PNG, ICO, ICNS)
         ├── config/
-        │   └── models.toml       ← Declarative model registry (7 models)
+        │   └── models.toml       ← Declarative model registry (8 models)
         ├── src/
         │   ├── main.rs           ← Bootstrap & lifecycle (135 lines)
         │   ├── lib.rs            ← Module declarations (17 lines)
@@ -98,12 +113,13 @@ GenHat-The-Local-Intelligence-Engine/
         │   │   ├── mod.rs        ← ModelRegistry (70 lines)
         │   │   └── types.rs      ← Core types: BackendKind, TaskType, ModelDef, etc. (274 lines)
         │   ├── backends/
-        │   │   ├── mod.rs            ← ModelBackend trait + create_backend() dispatch (58 lines)
+        │   │   ├── mod.rs            ← ModelBackend trait + create_backend() dispatch (65 lines)
         │   │   ├── llama_server.rs   ← llama-server HTTP child process (517 lines)
         │   │   ├── llama_cli.rs      ← llama-mtmd-cli per-request VLM (423 lines)
         │   │   ├── whisper_cpp.rs    ← whisper.cpp STT backend (410 lines)
         │   │   ├── tts_inference.rs  ← PyInstaller TTS binary (295 lines)
-        │   │   └── onnx_classifier.rs ← ONNX Runtime DistilBERT classifier (273 lines)
+        │   │   ├── onnx_classifier.rs ← ONNX Runtime DistilBERT classifier (273 lines)
+        │   │   └── cross_encoder.rs  ← ONNX Runtime ms-marco cross-encoder grader (210 lines)
         │   ├── process/
         │   │   ├── mod.rs        ← ProcessManager: spawn/health/reap/shutdown (542 lines)
         │   │   ├── pool.rs       ← Instance pool utilities (44 lines)
@@ -178,6 +194,10 @@ GenHat-The-Local-Intelligence-Engine/
 │  │  │onnx_classifier      │   │      │
 │  │  │(in-process, no HTTP) │   │      │
 │  │  └──────────────────────┘   │      │
+│  │  ┌──────────────────────┐   │      │
+│  │  │cross_encoder        │   │      │
+│  │  │(in-process, no HTTP) │   │      │
+│  │  └──────────────────────┘   │      │
 │  └──────────────────────────────┘      │
 │                                        │
 │  ┌─────────────────────────────┐       │
@@ -225,18 +245,18 @@ Core type definitions shared across the whole system:
 
 | Type | Purpose |
 |---|---|
-| `BackendKind` | Enum: `LlamaServer`, `LlamaCli`, `WhisperCpp`, `TtsInference`, `OnnxClassifier` |
+| `BackendKind` | Enum: `LlamaServer`, `LlamaCli`, `WhisperCpp`, `TtsInference`, `OnnxClassifier`, `CrossEncoder` |
 | `ModelKind` | Enum: `ChildProcess`, `InProcess` |
 | `TaskType` | Enum: `Chat`, `VisionChat`, `Summarize`, `Mindmap`, `Tts`, `PodcastAudio`, `PodcastScript`, `Transcribe`, `Stt`, `Embed`, `Classify`, `Enrich`, `Grade`, `Hyde`, `Custom(String)` |
 | `ModelDef` | Full model definition (id, name, backend, tasks, params, limits, etc.) |
 | `ModelHandle` | Enum: `ChildProcess { pid, port, child }` or `InMemory { model: Arc<dyn Any> }` |
 | `TaskRequest` | Input: `{ task_type, input, params }` |
-| `TaskResponse` | Output: `{ Chat, Embedding, Classification, Transcription, AudioFile, Raw }` |
+| `TaskResponse` | Output: `{ Chat, Embedding, Classification, Transcription, AudioFile, Score, Raw }` |
 | `ManagedModel` | Runtime model state (definition + live instances) |
 | `ManagedInstance` | Single running instance (handle, status, timestamps) |
 | `ModelInfo` | Serializable model status for frontend |
 
-### 4.4 `backends/` — Model Backend Implementations (1576 lines)
+### 4.4 `backends/` — Model Backend Implementations (1786 lines)
 
 The `ModelBackend` trait:
 ```rust
@@ -249,11 +269,12 @@ fn estimated_memory_mb(&self, def: &ModelDef) -> u32;
 
 | Backend | File | Type | Description |
 |---|---|---|---|
-| `LlamaServer` | `llama_server.rs` (517 lines) | ChildProcess | Spawns `llama-server` with random port. Supports chat, embeddings, summarize, enrich, grade, hyde. Health-checked via `/health`. |
+| `LlamaServer` | `llama_server.rs` (517 lines) | ChildProcess | Spawns `llama-server` with random port. Supports chat, embeddings, summarize, enrich, hyde. Health-checked via `/health`. |
 | `LlamaCli` | `llama_cli.rs` (423 lines) | ChildProcess | Runs `llama-mtmd-cli` per-request for vision-language queries. Passes base64 images via `--image` flag. |
 | `WhisperCpp` | `whisper_cpp.rs` (410 lines) | ChildProcess | Runs whisper.cpp per-request for audio transcription. Outputs JSON, parses segments. |
 | `TtsInference` | `tts_inference.rs` (295 lines) | ChildProcess | Spawns PyInstaller-bundled TTS binary. Input text → output .wav file. |
 | `OnnxClassifier` | `onnx_classifier.rs` (273 lines) | InProcess | Loads DistilBERT ONNX model + tokenizer into memory. Runs via ONNX Runtime (statically linked). 4 classes: NoRetrieval, SimpleRAG, MultiDoc, Summarization. Uses `Mutex<Session>` for thread safety. |
+| `CrossEncoder` | `cross_encoder.rs` (210 lines) | InProcess | Loads ms-marco-MiniLM-L6-v2 ONNX cross-encoder + tokenizer into memory. Takes query+passage pairs, returns relevance scores 0-1. Used for RAG chunk grading. 100-300x faster than LLM grading. Uses `Mutex<Session>` for thread safety. |
 
 ### 4.5 `process/` — Process Manager (623 lines)
 
@@ -336,7 +357,7 @@ Fully local, on-device Retrieval-Augmented Generation:
 1. Query → optional HyDE (Hypothetical Document Embeddings via LLM)
 2. BM25 search (Tantivy) + Vector KNN (IVF index)
 3. Reciprocal Rank Fusion (RRF) to merge results
-4. Optional LLM-based chunk grading (relevance scoring)
+4. Cross-encoder chunk grading (relevance scoring: 0-1 → 1-5 scale, ~0.05-0.1s for 8 chunks)
 5. Build context prompt → route to LLM for answer generation
 
 **Intelligent Query Routing (micro-classifier):**
@@ -350,7 +371,7 @@ Fully local, on-device Retrieval-Augmented Generation:
 
 | File | Lines | Purpose |
 |---|---|---|
-| `pipeline.rs` | 981 | Orchestrates ingestion + retrieval. Progressive phases. Background enrichment worker with Tauri event emission. HyDE generation. Classify-aware routing. |
+| `pipeline.rs` | 1020 | Orchestrates ingestion + retrieval. Progressive phases. Background enrichment worker with Tauri event emission. HyDE generation. Classify-aware routing. Cross-encoder grading (replaces slow LLM grading). |
 | `raptor.rs` | 760 | RAPTOR: Recursive Abstractive Processing for Tree-Organized Retrieval. K-means clustering → LLM summarization → hierarchical tree. Confidence-aware retrieval. Lazy auto-build. |
 | `db.rs` | 503 | SQLite storage: documents, chunks, embeddings (BLOB), enrichment metadata. r2d2 connection pooling. |
 | `vecindex.rs` | 361 | In-memory IVF (Inverted File) vector index. K-means partitioning for fast approximate KNN. Auto-rebuild on threshold. Insert/remove/search operations. |
@@ -364,15 +385,16 @@ Fully local, on-device Retrieval-Augmented Generation:
 
 ## 5. Model Registry (models.toml)
 
-Seven models registered:
+Eight models registered:
 
 | ID | Name | Backend | Tasks | Kind | Auto-Start |
 |---|---|---|---|---|---|
-| `lfm-1_2b` | LFM 1.2B INT8 | llama_server | chat, summarize, mindmap, enrich, grade, hyde | child_process | No |
+| `lfm-1_2b` | LFM 1.2B INT8 | llama_server | chat, summarize, mindmap, enrich, hyde | child_process | No |
 | `lfm-2_5-vl-q4` | LFM 2.5 VL INT4 | llama_cli | vision_chat | child_process | No |
 | `lfm-2_5-vl-q8` | LFM 2.5 VL INT8 | llama_cli | vision_chat | child_process | No |
 | `bge-small-embed` | BGE-small-en-v1.5 Q8 | llama_server | embed | child_process | No |
 | `query-router` | GenHat Query Router (DistilBERT ONNX) | onnx_classifier | classify | in_process | No |
+| `ms-marco-grader` | MS MARCO MiniLM L6 v2 INT8 | cross_encoder | grade | in_process | No |
 | `chatterbox-tts` | ChatterboxTTS Q4-K-M | tts_inference | tts, podcast_audio | child_process | No |
 | `whisper-base` | Whisper Q4_K | whisper_cpp | transcribe, stt | child_process | No |
 
@@ -382,20 +404,41 @@ All models are **lazily loaded on first request**. Set `auto_start = true` to pr
 
 ## 6. Frontend Architecture
 
-### 6.1 React App (`App.tsx` — 628 lines)
+### 6.1 React App (`App.tsx` — 850+ lines)
 
 The React app mounted into `#root` provides:
+- **4 Chat Modes**: Text, Vision, Audio, RAG with tabbed UI
 - Model selection dropdowns (LLM, Vision, Audio)
 - Start/stop model controls
 - Chat interface with streaming responses
 - Audio generation with playback
 - Image upload for vision queries
-- Document ingestion for RAG
-- RAG query interface
+- Document ingestion for RAG (single file + folder)
+- RAG query interface with source citations
 
-### 6.2 External CDN Dependencies (loaded in index.html)
+### 6.2 Modular Frontend Structure
+
+**types.ts** (180+ lines)
+- Complete TypeScript definitions for all API types
+- Interfaces: `RegisteredModel`, `IngestionStatus`, `SourceChunk`, `RagResult`, `RagStreamSetup`, `ChatMode`, etc.
+
+**api.ts** (420+ lines)
+- Centralized API layer for all Tauri IPC calls
+- 30+ methods covering models, inference, vision, audio, RAG, RAPTOR
+- Dynamic port resolution (no hardcoded ports)
+- Streaming support with port parameter
+
+**components/**
+- `ChatWindow.tsx` — Message display + input with mode-aware placeholders
+- `ModelSelector.tsx` — Model selection UI component
+- `Sidebar.tsx` — Navigation sidebar
+
+### 6.3 External CDN Dependencies (loaded in index.html)
 - **PDF.js v3.11.174** — PDF rendering
 - **Lucide Icons** — Icon library
+
+### 6.4 npm Dependencies
+- `lucide-react 0.575.0` — React icon components
 
 ---
 
@@ -423,6 +466,7 @@ The backends set `current_dir` to the binary folder so the OS linker finds sibli
 - **VLM**: GGUF format. `LiquidAI-VLM/` with model + multimodal projector
 - **Embeddings**: GGUF format. `bge-small-1.5-Q8/bge-small-en-v1.5-q8_0.gguf` (384-dim)
 - **Query Router**: ONNX format. `distilBert-query-router/onnx_model/model.onnx` (4-class DistilBERT)
+- **Grader**: ONNX format. `grader/ms-marco-MiniLM-L6-v2-onnx-int8/model_quantized.onnx` (cross-encoder for relevance scoring, INT8 quantized, ~80 MB)
 - **TTS**: GGUF format. `tts-chatterbox-q4-k-m/` (3 model files)
 - **STT**: GGUF format. `whisper/model_q4_k.gguf`
 - Custom path: set `GENHAT_MODEL_PATH` env var
@@ -561,4 +605,6 @@ Run with: `cd genhat-desktop/src-tauri && cargo test --lib`
 8. **Binary compatibility**: When updating llama.cpp binaries, update ALL OS folders to the same version.
 9. **ONNX model updates**: Re-train with `The-Bare/DistilBERT-fine-tune/train.ipynb`, export to ONNX (Cell 5), files go to `models/distilBert-query-router/onnx_model/`.
 10. **The-Bare scripts**: Standalone prototypes, not used by the desktop app. Used for quick testing and model training.
-11. **Keep this file updated**: Every architectural change, new module, renamed file, or removed feature must be reflected here.
+11. **Cross-encoder grading**: RAG chunk grading now uses ms-marco cross-encoder (100-300x faster than LLM). Converts 0-1 scores to 1-5 scale: score < 0.2 → 1, 0.2-0.4 → 2, 0.4-0.6 → 3, 0.6-0.8 → 4, > 0.8 → 5.
+12. **Frontend architecture**: Modular structure with types.ts (type definitions), api.ts (centralized API), components/ (reusable UI). App.tsx uses 4 chat modes with tabbed navigation.
+13. **Keep this file updated**: Every architectural change, new module, renamed file, or removed feature must be reflected here.

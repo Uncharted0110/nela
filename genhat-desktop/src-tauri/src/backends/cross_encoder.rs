@@ -1,0 +1,209 @@
+//! In-process cross-encoder backend using ONNX Runtime for relevance scoring.
+//!
+//! Takes a (query, passage) pair and returns a relevance score (0-1).
+//! Uses the ms-marco-MiniLM-L6-v2 cross-encoder model quantized to INT8.
+
+use crate::registry::types::{
+    InMemoryHandle, ModelDef, ModelHandle, TaskRequest, TaskResponse,
+};
+use async_trait::async_trait;
+use ort::session::Session;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+use tokenizers::Tokenizer;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Loaded model bundle
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct LoadedCrossEncoder {
+    session: Mutex<Session>,
+    tokenizer: Tokenizer,
+    max_length: usize,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Backend implementation
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug)]
+pub struct CrossEncoderBackend;
+
+impl CrossEncoderBackend {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl super::ModelBackend for CrossEncoderBackend {
+    async fn start(&self, def: &ModelDef, models_dir: &Path) -> Result<ModelHandle, String> {
+        let model_path = models_dir.join(&def.model_file);
+        let model_dir = model_path.parent().unwrap_or(models_dir);
+
+        let tokenizer_path = match def.params.get("tokenizer_file") {
+            Some(rel) => models_dir.join(rel),
+            None => model_dir.join("tokenizer.json"),
+        };
+
+        log::info!(
+            "[CrossEncoder] Loading model from {}",
+            model_path.display()
+        );
+
+        // Load tokenizer
+        let mut tokenizer = Tokenizer::from_file(&tokenizer_path)
+            .map_err(|e| format!("Failed to load tokenizer: {e}"))?;
+        tokenizer.with_padding(None);
+        tokenizer
+            .with_truncation(None)
+            .map_err(|e| format!("Failed to disable truncation: {e}"))?;
+
+        // Create ONNX Runtime session
+        let session = Session::builder()
+            .map_err(|e| format!("ORT session builder: {e}"))?
+            .with_intra_threads(4)
+            .map_err(|e| format!("ORT intra threads: {e}"))?
+            .commit_from_file(&model_path)
+            .map_err(|e| format!("ORT load model: {e}"))?;
+
+        let max_length: usize = def
+            .params
+            .get("max_length")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(256);
+
+        log::info!("[CrossEncoder] Model loaded (max_len={max_length})");
+
+        let loaded = LoadedCrossEncoder {
+            session: Mutex::new(session),
+            tokenizer,
+            max_length,
+        };
+
+        Ok(ModelHandle::InMemory(InMemoryHandle {
+            model: Arc::new(loaded),
+            loaded_at: Instant::now(),
+        }))
+    }
+
+    async fn is_healthy(&self, handle: &ModelHandle) -> bool {
+        matches!(handle, ModelHandle::InMemory(_))
+    }
+
+    async fn execute(
+        &self,
+        handle: &ModelHandle,
+        request: &TaskRequest,
+        _models_dir: &Path,
+    ) -> Result<TaskResponse, String> {
+        let mem = match handle {
+            ModelHandle::InMemory(h) => h,
+            _ => return Err("CrossEncoder requires InMemoryHandle".into()),
+        };
+
+        let loaded = mem
+            .model
+            .downcast_ref::<LoadedCrossEncoder>()
+            .ok_or("Failed to downcast to LoadedCrossEncoder")?;
+
+        // Extract query and passage from request
+        let query = request.extra.get("query")
+            .ok_or("CrossEncoder requires 'query' in extra params")?;
+        let passage = &request.input;
+
+        score_pair(query, passage, loaded)
+    }
+
+    async fn stop(&self, _handle: &ModelHandle) -> Result<(), String> {
+        log::info!("[CrossEncoder] Stopped (memory will free on drop)");
+        Ok(())
+    }
+
+    fn estimated_memory_mb(&self, def: &ModelDef) -> u32 {
+        if def.memory_mb > 0 {
+            def.memory_mb
+        } else {
+            100 // INT8 quantized ms-marco-MiniLM is ~80-100MB
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inference
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn score_pair(query: &str, passage: &str, loaded: &LoadedCrossEncoder) -> Result<TaskResponse, String> {
+    // 1. Concatenate query + [SEP] + passage
+    let pair_text = format!("{} [SEP] {}", query, passage);
+
+    // 2. Tokenize
+    let encoding = loaded
+        .tokenizer
+        .encode(pair_text.as_str(), true)
+        .map_err(|e| format!("Tokenization failed: {e}"))?;
+
+    let mut ids = encoding.get_ids().to_vec();
+    if ids.len() > loaded.max_length {
+        ids.truncate(loaded.max_length);
+    }
+    let seq_len = ids.len();
+
+    // 3. Build input tensors
+    let input_ids: Vec<i64> = ids.iter().map(|&id| id as i64).collect();
+    let attention_mask: Vec<i64> = vec![1i64; seq_len];
+    let token_type_ids: Vec<i64> = encoding.get_type_ids().iter().map(|&t| t as i64).collect();
+
+    // 4. Run ONNX inference
+    let input_ids_value = ort::value::Value::from_array(([1usize, seq_len], input_ids))
+        .map_err(|e| format!("ORT input_ids value: {e}"))?;
+    let attention_mask_value = ort::value::Value::from_array(([1usize, seq_len], attention_mask))
+        .map_err(|e| format!("ORT attention_mask value: {e}"))?;
+    let token_type_ids_value = ort::value::Value::from_array(([1usize, seq_len], token_type_ids))
+        .map_err(|e| format!("ORT token_type_ids value: {e}"))?;
+
+    let mut session = loaded
+        .session
+        .lock()
+        .map_err(|e| format!("Session lock poisoned: {e}"))?;
+
+    let outputs = session
+        .run(ort::inputs![
+            "input_ids" => input_ids_value,
+            "attention_mask" => attention_mask_value,
+            "token_type_ids" => token_type_ids_value,
+        ])
+        .map_err(|e| format!("ORT run: {e}"))?;
+
+    // 5. Extract logits tensor → [1, 1] (single regression output)
+    let logits_value = outputs
+        .get("logits")
+        .ok_or("ONNX model output missing 'logits'")?;
+
+    let logits_tensor = logits_value
+        .try_extract_tensor::<f32>()
+        .map_err(|e| format!("Extract logits: {e}"))?;
+
+    let logits: Vec<f32> = logits_tensor.1.to_vec();
+    let raw_score = logits.first().copied().unwrap_or(0.0);
+
+    // 6. Apply sigmoid to normalize to [0, 1]
+    let score = 1.0 / (1.0 + (-raw_score).exp());
+
+    log::debug!(
+        "[CrossEncoder] '{}' relevance={:.3}",
+        truncate_for_log(passage, 60),
+        score
+    );
+
+    Ok(TaskResponse::Score(score))
+}
+
+fn truncate_for_log(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..max])
+    }
+}

@@ -22,6 +22,7 @@ pub enum BackendKind {
     WhisperCpp,
     TtsInference,
     OnnxClassifier,
+    CrossEncoder,
 }
 
 /// Whether the model runs as a child process or in the Tauri process.
@@ -239,6 +240,8 @@ pub enum TaskResponse {
         label: String,
         confidence: f32,
     },
+    /// Relevance score (0-1) from cross-encoder.
+    Score(f32),
     /// Transcription segments.
     Transcription {
         segments: Vec<TranscriptSegment>,

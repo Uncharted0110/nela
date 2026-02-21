@@ -139,6 +139,25 @@ idle_timeout_s = 0
 priority = 10
 memory_mb = 2000
 
+# ── Relevance Grader: ms-marco-MiniLM-L6-v2 (ONNX Runtime in-process) ────────
+
+[[models]]
+id = "ms-marco-grader"
+name = "MS MARCO MiniLM L6 v2 INT8"
+backend = "cross_encoder"
+kind = "in_process"
+model_file = "grader/ms-marco-MiniLM-L6-v2-onnx-int8/model_quantized.onnx"
+tasks = ["grade"]
+auto_start = false
+max_instances = 1
+idle_timeout_s = 300
+priority = 20
+memory_mb = 100
+
+[models.params]
+tokenizer_file = "grader/ms-marco-MiniLM-L6-v2-onnx-int8/tokenizer.json"
+max_length = "512"
+
 # ── STT: Whisper (whisper.cpp per-request) ────────────────────────────────────
 
 [[models]]

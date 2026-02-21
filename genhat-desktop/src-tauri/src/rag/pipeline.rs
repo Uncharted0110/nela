@@ -904,26 +904,35 @@ impl RagPipeline {
         }
     }
 
-    /// Grade a chunk's relevance to the query (1-5 scale).
+    /// Grade a chunk's relevance to the query (1-5 scale) using cross-encoder.
     /// Returns 3 as default if grading model is unavailable.
     async fn grade_chunk(&self, query: &str, chunk_text: &str) -> u8 {
         let request = tasks::grade_request(query, chunk_text);
         match self.router.route(&request).await {
-            Ok(TaskResponse::Text(response)) => {
-                // Parse the grade (LLM returns a single digit 1-5)
-                response
-                    .trim()
-                    .chars()
-                    .find(|c| c.is_ascii_digit())
-                    .and_then(|c| c.to_digit(10))
-                    .map(|d| d.clamp(1, 5) as u8)
-                    .unwrap_or(3)
+            Ok(TaskResponse::Score(score)) => {
+                // Convert 0-1 score to 1-5 scale
+                // 0.0-0.2 → 1, 0.2-0.4 → 2, 0.4-0.6 → 3, 0.6-0.8 → 4, 0.8-1.0 → 5
+                let grade = ((score * 5.0).ceil() as u8).clamp(1, 5);
+                grade
             }
             _ => {
                 log::debug!("Grading unavailable, defaulting to 3");
                 3
             }
         }
+    }
+
+    /// Batch grade multiple chunks at once for efficiency.
+    /// Returns grades in the same order as input chunks.
+    async fn batch_grade_chunks(&self, query: &str, chunk_texts: &[&str]) -> Vec<u8> {
+        let mut grades = Vec::with_capacity(chunk_texts.len());
+        
+        // Process each chunk (cross-encoder is fast, no need for true batching yet)
+        for chunk_text in chunk_texts {
+            grades.push(self.grade_chunk(query, chunk_text).await);
+        }
+        
+        grades
     }
 
     /// Vector similarity search using the in-memory VectorIndex (IVF-accelerated).

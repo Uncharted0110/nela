@@ -6,6 +6,7 @@ interface ChatWindowProps {
   isLoading: boolean;
   onSend: (text: string) => void;
   audioSrc?: string;
+  placeholder?: string;
 }
 
 const ChatWindow: React.FC<ChatWindowProps> = ({
@@ -14,6 +15,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   isLoading,
   onSend,
   audioSrc,
+  placeholder = "Message GenHat...",
 }) => {
   const [inputObj, setInputObj] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
@@ -69,7 +71,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
           value={inputObj}
           onChange={(e) => setInputObj(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Message GenHat..."
+          placeholder={placeholder}
           rows={1}
         />
         <button onClick={handleSend} disabled={isLoading || !inputObj.trim()}>

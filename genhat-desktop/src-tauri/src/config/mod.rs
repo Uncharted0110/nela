@@ -83,6 +83,7 @@ fn parse_backend(s: &str) -> Result<BackendKind, String> {
         "whisper_cpp" => Ok(BackendKind::WhisperCpp),
         "tts_inference" => Ok(BackendKind::TtsInference),
         "onnx_classifier" => Ok(BackendKind::OnnxClassifier),
+        "cross_encoder" => Ok(BackendKind::CrossEncoder),
         other => Err(format!("Unknown backend: {other}")),
     }
 }

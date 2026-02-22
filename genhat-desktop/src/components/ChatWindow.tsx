@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import MarkdownRenderer from "./MarkdownRenderer";
 
 interface ChatWindowProps {
   messages: { role: string; content: string }[];
@@ -43,7 +44,13 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
         {messages.map((msg, idx) => (
           <div key={idx} className={`message ${msg.role}`}>
             <div className="avatar">{msg.role === "user" ? "You" : "AI"}</div>
-            <div className="content">{msg.content}</div>
+            <div className="content">
+              {msg.role === "assistant" ? (
+                <MarkdownRenderer content={msg.content} />
+              ) : (
+                msg.content
+              )}
+            </div>
           </div>
         ))}
 
@@ -51,7 +58,11 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
           <div className="message assistant loading">
             <div className="avatar">AI</div>
             <div className="content">
-              {streamingContent || <span className="typing-indicator">...</span>}
+              {streamingContent ? (
+                <MarkdownRenderer content={streamingContent} />
+              ) : (
+                <span className="typing-indicator">...</span>
+              )}
             </div>
           </div>
         )}

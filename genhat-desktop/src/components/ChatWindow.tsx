@@ -1,6 +1,43 @@
 import React, { useState, useEffect, useRef } from "react";
 import MarkdownRenderer from "./MarkdownRenderer";
 
+/** Copy button for a full assistant response */
+const CopyMsgButton: React.FC<{ text: string }> = ({ text }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <button className="msg-copy-btn" onClick={handleCopy} title="Copy response">
+      {copied ? (
+        /* Check icon */
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+          <path d="M20 6L9 17L4 12" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      ) : (
+        /* Clipboard icon */
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+          <rect x="9" y="2" width="6" height="4" rx="1" stroke="currentColor" strokeWidth="2"/>
+          <path d="M9 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2h-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+        </svg>
+      )}
+    </button>
+  );
+};
+
 interface ChatWindowProps {
   messages: { role: string; content: string }[];
   streamingContent: string;
@@ -50,7 +87,12 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
             <div className="avatar">{msg.role === "user" ? "You" : "AI"}</div>
             <div className="content">
               {msg.role === "assistant" ? (
-                <MarkdownRenderer content={msg.content} />
+                <div className="assistant-body">
+                  <MarkdownRenderer content={msg.content} />
+                  <div className="msg-actions">
+                    <CopyMsgButton text={msg.content} />
+                  </div>
+                </div>
               ) : (
                 msg.content
               )}

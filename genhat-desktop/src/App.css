@@ -706,6 +706,54 @@ body {
   white-space: pre-wrap;
 }
 
+/* ── Assistant message copy ── */
+.assistant-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.msg-actions {
+  display: flex;
+  justify-content: flex-start;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.message.assistant:hover .msg-actions {
+  opacity: 1;
+}
+
+.msg-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent !important;
+  color: var(--text-muted) !important;
+  padding: 3px 9px !important;
+  font-size: 0.7rem !important;
+  border-radius: 5px !important;
+  border: none !important;
+  cursor: pointer;
+  transition: all 0.15s;
+  box-shadow: none !important;
+  white-space: nowrap;
+}
+
+.msg-copy-btn:hover {
+  color: var(--text-primary) !important;
+  border: none !important;
+  transform: none !important;
+}
+
+/* Ensure no visible border or focus ring on the copy button */
+.msg-copy-btn:focus,
+.msg-copy-btn:active {
+  outline: none !important;
+  box-shadow: none !important;
+  border: none !important;
+}
+
 
 /* ── Typing Dots ── */
 .typing-dots {
@@ -792,6 +840,13 @@ body {
   max-height: 200px;
   outline: none;
   line-height: 1.5;
+  /* Hide scrollbar on all browsers */
+  scrollbar-width: none;       /* Firefox */
+  -ms-overflow-style: none;    /* IE/Edge */
+}
+
+.input-wrapper textarea::-webkit-scrollbar {
+  display: none; /* Chrome / Safari / Tauri WebView */
 }
 
 .input-wrapper textarea::placeholder {

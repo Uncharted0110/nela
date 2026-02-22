@@ -129,6 +129,12 @@ impl RagPipeline {
         // 1. Parse document
         let mut parsed = parsers::parse_document(file_path)?;
         let title = parsed.title.clone();
+        
+        log::info!("Parsed document '{}' into {} sections", title, parsed.sections.len());
+        for (i, sec) in parsed.sections.iter().take(3).enumerate() {
+            log::debug!("  Section {}: {} chars", i + 1, sec.text.len());
+        }
+        
         let doc_type = file_path
             .extension()
             .and_then(|e| e.to_str())
@@ -190,6 +196,14 @@ impl RagPipeline {
         }
 
         let chunk_count = all_chunks.len();
+        log::info!("Created {} chunks from document '{}'", chunk_count, title);
+        for (i, chunk) in all_chunks.iter().take(3).enumerate() {
+            log::debug!("  Chunk {}: {} chars, preview: {}", 
+                i + 1, 
+                chunk.text.len(),
+                chunk.text.chars().take(80).collect::<String>()
+            );
+        }
 
         // 3. Insert document record
         let doc_id = self.db.insert_document(
@@ -273,6 +287,7 @@ impl RagPipeline {
             return Ok(0);
         }
 
+        log::debug!("Enrichment: Processing {} unenriched chunks", unenriched.len());
         let chunk_records = self.db.get_chunks_by_ids(&unenriched)?;
         let mut enriched = 0;
 
@@ -308,11 +323,13 @@ impl RagPipeline {
                 }
                 Err(e) => {
                     log::warn!("Enrichment failed for chunk {}: {e}", chunk.id);
+                    log::info!("Enrichment model unavailable, skipping remaining chunks");
                     break; // Model probably not available
                 }
             }
         }
 
+        log::info!("Enrichment round complete: {}/{} chunks enriched", enriched, chunk_records.len());
         Ok(enriched)
     }
 
@@ -324,14 +341,19 @@ impl RagPipeline {
         tauri::async_runtime::spawn(async move {
             log::info!("RAG enrichment worker started");
             let mut idle_cycles: u32 = 0;
+            let mut failed_cycles: u32 = 0;
             loop {
                 match pipeline.enrich_pending(5).await {
                     Ok(0) => {
                         idle_cycles += 1;
+                        log::info!("RAG enrichment idle (cycle {})", idle_cycles);
 
                         // After 2 idle cycles (~60s), try building RAPTOR trees
                         if idle_cycles == 2 {
+                            log::info!("RAG enrichment complete, triggering RAPTOR auto-build");
                             pipeline.auto_build_raptor_trees(&app_handle).await;
+                            // Reset after building to avoid re-triggering on next cycle
+                            idle_cycles = 0;
                         }
 
                         // Periodically rebuild vector index partitions during idle time
@@ -342,6 +364,7 @@ impl RagPipeline {
                     }
                     Ok(n) => {
                         idle_cycles = 0;
+                        failed_cycles = 0;
                         log::info!("Enriched {n} chunks, continuing...");
                         // Emit progress event to frontend
                         let _ = app_handle.emit("rag:enrichment_progress", serde_json::json!({
@@ -353,7 +376,17 @@ impl RagPipeline {
                     }
                     Err(e) => {
                         idle_cycles = 0;
-                        log::warn!("Enrichment error: {e}");
+                        failed_cycles += 1;
+                        log::warn!("Enrichment error (cycle {}): {}", failed_cycles, e);
+                        
+                        // After 3 consecutive failures (~3 mins), give up on enrichment
+                        // and try to build RAPTOR trees anyway from existing chunks
+                        if failed_cycles >= 3 {
+                            log::warn!("Enrichment persistently failing, triggering RAPTOR anyway");
+                            pipeline.auto_build_raptor_trees(&app_handle).await;
+                            failed_cycles = 0; // Reset to avoid re-triggering
+                        }
+                        
                         let _ = app_handle.emit("rag:enrichment_progress", serde_json::json!({
                             "enriched_this_round": 0,
                             "status": "error",
@@ -364,6 +397,85 @@ impl RagPipeline {
                 }
             }
         });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Context Window Expansion
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Build an augmented context string for the LLM by expanding each selected
+    /// source chunk with its immediate predecessor and successor in the document.
+    ///
+    /// This dramatically improves answer quality for questions like
+    /// "What are the objectives?" where the heading lands in one chunk
+    /// and the body text in the next.
+    ///
+    /// `fetched_chunks` must be the full `Vec<ChunkRecord>` already fetched
+    /// during the retrieval step (contains doc_id + chunk_index for each chunk).
+    fn build_expanded_context(
+        &self,
+        sources: &[SourceChunk],
+        fetched_chunks: &[crate::rag::db::ChunkRecord],
+    ) -> String {
+        // Collect (doc_id, chunk_index) for every selected source
+        let refs: Vec<(i64, i32)> = sources
+            .iter()
+            .filter_map(|s| {
+                fetched_chunks
+                    .iter()
+                    .find(|c| c.id == s.chunk_id)
+                    .map(|c| (c.doc_id, c.chunk_index))
+            })
+            .collect();
+
+        // Fetch prev/next neighbors in one DB call
+        let neighbors = self.db.get_adjacent_chunks(&refs).unwrap_or_default();
+
+        // IDs of chunks that are already selected sources (don't double-print)
+        let selected_ids: std::collections::HashSet<i64> =
+            sources.iter().map(|s| s.chunk_id).collect();
+
+        sources
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                // Find the meta for this source
+                let meta = fetched_chunks.iter().find(|c| c.id == s.chunk_id);
+
+                let body = if let Some(c) = meta {
+                    let mut parts: Vec<&str> = Vec::new();
+
+                    // Previous chunk (if not already a selected source)
+                    if let Some(prev) = neighbors
+                        .iter()
+                        .find(|n| n.doc_id == c.doc_id && n.chunk_index == c.chunk_index - 1)
+                    {
+                        if !selected_ids.contains(&prev.id) {
+                            parts.push(prev.text.as_str());
+                        }
+                    }
+
+                    parts.push(s.text.as_str());
+
+                    // Next chunk (if not already a selected source)
+                    if let Some(next) = neighbors
+                        .iter()
+                        .find(|n| n.doc_id == c.doc_id && n.chunk_index == c.chunk_index + 1)
+                    {
+                        if !selected_ids.contains(&next.id) {
+                            parts.push(next.text.as_str());
+                        }
+                    }
+
+                    parts.join("\n")
+                } else {
+                    s.text.clone()
+                };
+
+                format!("[Source {} — {}]\n{}", i + 1, s.doc_title, body)
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -458,14 +570,15 @@ impl RagPipeline {
             let rephrased = self.generate_rephrasings(user_query).await;
 
             let mut retry_sources = Vec::new();
+            let mut retry_chunks: Vec<crate::rag::db::ChunkRecord> = Vec::new();
             for variant in &rephrased {
                 let bm25_r = self.bm25.search(variant, top_k).unwrap_or_default();
                 let vec_r = self.vector_search(variant, top_k).await.unwrap_or_default();
                 let fused_r = rrf_fuse(&[bm25_r, vec_r]);
 
                 let ids: Vec<i64> = fused_r.iter().take(top_k).map(|r| r.chunk_id).collect();
-                if let Ok(chunks) = self.db.get_chunks_by_ids(&ids) {
-                    for (fused_result, chunk) in fused_r.iter().zip(chunks.iter()) {
+                if let Ok(fetched) = self.db.get_chunks_by_ids(&ids) {
+                    for (fused_result, chunk) in fused_r.iter().zip(fetched.iter()) {
                         let doc_title = self
                             .db
                             .doc_title_for_chunk(chunk.id)
@@ -477,6 +590,7 @@ impl RagPipeline {
                             score: fused_result.rrf_score,
                         });
                     }
+                    retry_chunks.extend(fetched);
                 }
             }
 
@@ -493,13 +607,8 @@ impl RagPipeline {
                 });
             }
 
-            // Use retry_sources for answer generation
-            let context = retry_sources
-                .iter()
-                .enumerate()
-                .map(|(i, s)| format!("[Source {} — {}]\n{}", i + 1, s.doc_title, s.text))
-                .collect::<Vec<_>>()
-                .join("\n\n");
+            // Use retry_sources for answer generation (with context expansion)
+            let context = self.build_expanded_context(&retry_sources, &retry_chunks);
 
             let augmented_prompt = format!(
                 "Use the following context to answer the question. \
@@ -522,20 +631,9 @@ impl RagPipeline {
             });
         }
 
-        // 8. Build augmented prompt
-        let context = sources
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                format!(
-                    "[Source {} — {}]\n{}",
-                    i + 1,
-                    s.doc_title,
-                    s.text
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n");
+        // 8. Build augmented prompt with context window expansion
+        let context = self.build_expanded_context(&sources, &chunks);
+        log::debug!("RAG context ({} chars, {} sources)", context.len(), sources.len());
 
         let augmented_prompt = format!(
             "Use the following context to answer the question. \
@@ -604,7 +702,7 @@ impl RagPipeline {
         }
 
         // 6. Fetch chunk texts
-        let chunks = self.db.get_chunks_by_ids(&chunk_ids)?;
+        let mut chunks = self.db.get_chunks_by_ids(&chunk_ids)?;
 
         // 7. Grade chunks for relevance
         let mut graded_sources: Vec<(SourceChunk, u8)> = Vec::new();
@@ -641,13 +739,14 @@ impl RagPipeline {
             log::info!("All chunks failed grading — attempting RAG Fusion rephrase (streaming)");
             let rephrased = self.generate_rephrasings(user_query).await;
             let mut retry_sources = Vec::new();
+            let mut retry_chunks: Vec<crate::rag::db::ChunkRecord> = Vec::new();
             for variant in &rephrased {
                 let bm25_r = self.bm25.search(variant, top_k).unwrap_or_default();
                 let vec_r = self.vector_search(variant, top_k).await.unwrap_or_default();
                 let fused_r = rrf_fuse(&[bm25_r, vec_r]);
                 let ids: Vec<i64> = fused_r.iter().take(top_k).map(|r| r.chunk_id).collect();
-                if let Ok(chunks) = self.db.get_chunks_by_ids(&ids) {
-                    for (fused_result, chunk) in fused_r.iter().zip(chunks.iter()) {
+                if let Ok(fetched) = self.db.get_chunks_by_ids(&ids) {
+                    for (fused_result, chunk) in fused_r.iter().zip(fetched.iter()) {
                         let doc_title = self
                             .db
                             .doc_title_for_chunk(chunk.id)
@@ -659,6 +758,7 @@ impl RagPipeline {
                             score: fused_result.rrf_score,
                         });
                     }
+                    retry_chunks.extend(fetched);
                 }
             }
             retry_sources.sort_by(|a, b| {
@@ -668,6 +768,8 @@ impl RagPipeline {
             });
             retry_sources.dedup_by_key(|s| s.chunk_id);
             retry_sources.truncate(top_k);
+            // Swap chunk metadata so context expansion works on retry sources
+            chunks = retry_chunks;
             sources = retry_sources;
         }
 
@@ -679,15 +781,9 @@ impl RagPipeline {
             });
         }
 
-        // Build augmented prompt
-        let context = sources
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                format!("[Source {} — {}]\n{}", i + 1, s.doc_title, s.text)
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n");
+        // Build augmented prompt with context window expansion
+        let context = self.build_expanded_context(&sources, &chunks);
+        log::debug!("RAG streaming context ({} chars, {} sources)", context.len(), sources.len());
 
         let augmented_prompt = format!(
             "Use the following context to answer the question. \
@@ -1169,6 +1265,7 @@ impl RagPipeline {
     /// Automatically build RAPTOR trees for fully-enriched documents
     /// that don't have one yet. Called during enrichment worker idle cycles.
     async fn auto_build_raptor_trees(&self, app_handle: &tauri::AppHandle) {
+        log::info!("RAPTOR auto-build: Checking documents for tree building");
         let docs = match self.db.list_documents() {
             Ok(d) => d,
             Err(e) => {
@@ -1177,10 +1274,19 @@ impl RagPipeline {
             }
         };
 
+        log::info!("RAPTOR auto-build: Found {} documents to check", docs.len());
         for doc in docs {
             // Only auto-build for fully enriched docs without a RAPTOR tree
+            log::debug!(
+                "RAPTOR check doc {}: enriched={}/{}, chunks={}",
+                doc.id, doc.enriched_count, doc.chunk_count, doc.chunk_count
+            );
+            
             if doc.enriched_count >= doc.chunk_count && doc.chunk_count > 0 {
-                if let Ok(false) = self.has_raptor_tree(doc.id) {
+                let has_tree = self.has_raptor_tree(doc.id).unwrap_or(true);
+                log::debug!("  Doc {} fully enriched, has_tree={}", doc.id, has_tree);
+                
+                if !has_tree {
                     log::info!(
                         "Lazy RAPTOR: building tree for doc {} ({})",
                         doc.id,
@@ -1221,6 +1327,11 @@ impl RagPipeline {
                             );
                         }
                     }
+                } else {
+                    log::debug!(
+                        "  Doc {} not ready: enriched {}/{} chunks",
+                        doc.id, doc.enriched_count, doc.chunk_count
+                    );
                 }
             }
         }

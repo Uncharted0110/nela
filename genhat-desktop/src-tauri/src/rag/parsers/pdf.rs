@@ -8,6 +8,11 @@ pub fn parse(path: &Path) -> Result<ParsedDocument, String> {
     let text = pdf_extract::extract_text_from_mem(&bytes)
         .map_err(|e| format!("PDF extraction error: {e}"))?;
 
+    // Log raw extracted text for debugging
+    log::debug!("PDF raw text length: {} chars", text.len());
+    log::debug!("PDF raw text preview (first 500 chars):\n{}", 
+        text.chars().take(500).collect::<String>());
+
     let title = path
         .file_name()
         .and_then(|s| s.to_str())
@@ -36,6 +41,16 @@ pub fn parse(path: &Path) -> Result<ParsedDocument, String> {
             })
             .collect()
     };
+
+    log::debug!("PDF parsed into {} sections", sections.len());
+    for (i, sec) in sections.iter().take(3).enumerate() {
+        log::debug!("Section {}: {} chars, metadata: {}, preview: {}", 
+            i + 1, 
+            sec.text.len(), 
+            sec.metadata,
+            sec.text.chars().take(100).collect::<String>()
+        );
+    }
 
     Ok(ParsedDocument { title, sections })
 }

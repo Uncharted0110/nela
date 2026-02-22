@@ -444,6 +444,55 @@ impl RagDb {
         Ok(ordered)
     }
 
+    /// Fetch adjacent (prev/next) chunks for context window expansion.
+    /// Given a list of (doc_id, chunk_index) pairs, returns all chunks whose
+    /// chunk_index is (chunk_index - 1) or (chunk_index + 1) within the same document.
+    pub fn get_adjacent_chunks(
+        &self,
+        refs: &[(i64, i32)],
+    ) -> Result<Vec<ChunkRecord>, String> {
+        if refs.is_empty() {
+            return Ok(vec![]);
+        }
+        let conn = self.conn()?;
+        let mut result: Vec<ChunkRecord> = Vec::new();
+
+        for &(doc_id, chunk_index) in refs {
+            let prev_idx = chunk_index - 1;
+            let next_idx = chunk_index + 1;
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, doc_id, chunk_index, text, enriched_text, metadata, confidence
+                     FROM chunks
+                     WHERE doc_id = ?1 AND chunk_index IN (?2, ?3)
+                     ORDER BY chunk_index ASC",
+                )
+                .map_err(|e| format!("Prepare error: {e}"))?;
+
+            let rows = stmt
+                .query_map(params![doc_id, prev_idx, next_idx], |row| {
+                    Ok(ChunkRecord {
+                        id: row.get(0)?,
+                        doc_id: row.get(1)?,
+                        chunk_index: row.get(2)?,
+                        text: row.get(3)?,
+                        enriched_text: row.get(4)?,
+                        metadata: row.get(5)?,
+                        confidence: row.get(6)?,
+                    })
+                })
+                .map_err(|e| format!("Query error: {e}"))?;
+
+            for row in rows.flatten() {
+                // Avoid duplicates when multiple selected chunks share the same neighbor
+                if !result.iter().any(|r| r.id == row.id) {
+                    result.push(row);
+                }
+            }
+        }
+        Ok(result)
+    }
+
     /// Get the document title for a chunk.
     pub fn doc_title_for_chunk(&self, chunk_id: i64) -> Result<String, String> {
         let conn = self.conn()?;

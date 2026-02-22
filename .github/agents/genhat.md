@@ -351,14 +351,15 @@ Fully local, on-device Retrieval-Augmented Generation:
 **Progressive Ingestion:**
 - **Phase 1 (instant)**: Parse document → chunk → embed via BGE → store in SQLite + BM25 index + IVF vector index
 - **Phase 2 (background)**: Enrich chunks via LLM (generates summaries/questions) → re-embed enriched text
-- **Phase 3 (on-demand)**: Build RAPTOR tree (hierarchical summarization)
+- **Phase 3 (lazy auto-trigger)**: Build RAPTOR tree (hierarchical summarization). Triggered automatically by the enrichment worker after 2 idle cycles (~60s of no pending chunks), or after 3 consecutive enrichment failures (fallback). Also buildable on-demand via the `build_raptor_tree` command.
 
 **Hybrid Retrieval:**
 1. Query → optional HyDE (Hypothetical Document Embeddings via LLM)
 2. BM25 search (Tantivy) + Vector KNN (IVF index)
 3. Reciprocal Rank Fusion (RRF) to merge results
 4. Cross-encoder chunk grading (relevance scoring: 0-1 → 1-5 scale, ~0.05-0.1s for 8 chunks)
-5. Build context prompt → route to LLM for answer generation
+5. **Context window expansion**: For each top-k graded chunk, fetch the preceding (`chunk_index-1`) and following (`chunk_index+1`) chunks from the same document. Neighbors that are themselves selected sources are deduplicated. The expanded text (prev + source + next) is what the LLM sees.
+6. Build context prompt → route to LLM for answer generation
 
 **Intelligent Query Routing (micro-classifier):**
 - DistilBERT ONNX model classifies incoming queries into 4 classes:
@@ -371,9 +372,9 @@ Fully local, on-device Retrieval-Augmented Generation:
 
 | File | Lines | Purpose |
 |---|---|---|
-| `pipeline.rs` | 1020 | Orchestrates ingestion + retrieval. Progressive phases. Background enrichment worker with Tauri event emission. HyDE generation. Classify-aware routing. Cross-encoder grading (replaces slow LLM grading). |
+| `pipeline.rs` | ~1340 | Orchestrates ingestion + retrieval. Progressive phases. Background enrichment worker with Tauri event emission. HyDE generation. Classify-aware routing. Cross-encoder grading (replaces slow LLM grading). Context window expansion (`build_expanded_context`). RAPTOR lazy auto-trigger with `idle_cycles` reset + `failed_cycles` fallback. |
 | `raptor.rs` | 760 | RAPTOR: Recursive Abstractive Processing for Tree-Organized Retrieval. K-means clustering → LLM summarization → hierarchical tree. Confidence-aware retrieval. Lazy auto-build. |
-| `db.rs` | 503 | SQLite storage: documents, chunks, embeddings (BLOB), enrichment metadata. r2d2 connection pooling. |
+| `db.rs` | ~510 | SQLite storage: documents, chunks, embeddings (BLOB), enrichment metadata. r2d2 connection pooling. Added `get_adjacent_chunks(refs: &[(i64, i32)])` for context window expansion. |
 | `vecindex.rs` | 361 | In-memory IVF (Inverted File) vector index. K-means partitioning for fast approximate KNN. Auto-rebuild on threshold. Insert/remove/search operations. |
 | `chunker.rs` | 206 | Recursive character splitting with configurable chunk size/overlap. Semantic boundary detection (paragraphs, sentences). |
 | `search.rs` | 198 | Tantivy BM25 full-text index. Schema auto-detection + migration on mismatch. |
@@ -606,5 +607,7 @@ Run with: `cd genhat-desktop/src-tauri && cargo test --lib`
 9. **ONNX model updates**: Re-train with `The-Bare/DistilBERT-fine-tune/train.ipynb`, export to ONNX (Cell 5), files go to `models/distilBert-query-router/onnx_model/`.
 10. **The-Bare scripts**: Standalone prototypes, not used by the desktop app. Used for quick testing and model training.
 11. **Cross-encoder grading**: RAG chunk grading now uses ms-marco cross-encoder (100-300x faster than LLM). Converts 0-1 scores to 1-5 scale: score < 0.2 → 1, 0.2-0.4 → 2, 0.4-0.6 → 3, 0.6-0.8 → 4, > 0.8 → 5.
-12. **Frontend architecture**: Modular structure with types.ts (type definitions), api.ts (centralized API), components/ (reusable UI). App.tsx uses 4 chat modes with tabbed navigation.
-13. **Keep this file updated**: Every architectural change, new module, renamed file, or removed feature must be reflected here.
+12. **Context window expansion**: After cross-encoder grading, `build_expanded_context()` fetches neighboring chunks (`chunk_index±1`) from `db.get_adjacent_chunks()` in a single DB call. Neighbors already selected as top-k sources are skipped (deduplicated via a `HashSet`). This applies to both `query()` (non-streaming) and `query_retrieve()` (streaming) paths, including their RAG Fusion retry branches. The RAPTOR path (`query_with_raptor`) does NOT use this — RAPTOR summaries already provide hierarchical context expansion.
+13. **RAPTOR worker**: The enrichment worker tracks `idle_cycles` (increments each 30s poll with no pending chunks) and `failed_cycles` (consecutive enrichment errors). RAPTOR auto-build triggers at `idle_cycles >= 2` (reset to 0 afterwards) OR `failed_cycles >= 3` (LLM unavailable fallback). Previously, a bug caused `idle_cycles` to never be reset, so repeated triggers would occur. Fixed.
+14. **Frontend architecture**: Modular structure with types.ts (type definitions), api.ts (centralized API), components/ (reusable UI). App.tsx uses 4 chat modes with tabbed navigation.
+15. **Keep this file updated**: Every architectural change, new module, renamed file, or removed feature must be reflected here.

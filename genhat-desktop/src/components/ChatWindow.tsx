@@ -84,19 +84,29 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
       <div className="messages-area">
         {messages.map((msg, idx) => (
           <div key={idx} className={`message ${msg.role}`}>
-            <div className="avatar">{msg.role === "user" ? "You" : "AI"}</div>
-            <div className="content">
-              {msg.role === "assistant" ? (
-                <div className="assistant-body">
-                  <MarkdownRenderer content={msg.content} />
-                  <div className="msg-actions">
-                    <CopyMsgButton text={msg.content} />
+            {msg.role === "user" ? (
+              <>
+                <div className="content">{msg.content}</div>
+                <div className="avatar">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 12c2.761 0 5-2.239 5-5s-2.239-5-5-5-5 2.239-5 5 2.239 5 5 5z" fill="currentColor" />
+                    <path d="M4 20c0-3.3137 2.6863-6 6-6h4c3.3137 0 6 2.6863 6 6v1H4v-1z" fill="currentColor" />
+                  </svg>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="avatar">AI</div>
+                <div className="content">
+                  <div className="assistant-body">
+                    <MarkdownRenderer content={msg.content} />
+                    <div className="msg-actions">
+                      <CopyMsgButton text={msg.content} />
+                    </div>
                   </div>
                 </div>
-              ) : (
-                msg.content
-              )}
-            </div>
+              </>
+            )}
           </div>
         ))}
 

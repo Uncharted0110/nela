@@ -1,4 +1,4 @@
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import type {
   ChatMessage,
   ModelFile,
@@ -68,12 +68,12 @@ export const Api = {
     input: string,
     options?: { voice?: string; speed?: number }
   ): Promise<string> {
-    const filePath = await invoke<string>("generate_speech", {
+    // Backend returns a data:audio/wav;base64,… URL directly
+    return invoke<string>("generate_speech", {
       input,
       voice: options?.voice ?? null,
       speed: options?.speed ?? null,
     });
-    return convertFileSrc(filePath);
   },
 
   /** Transcribe an audio file to text using Whisper. */

@@ -34,7 +34,7 @@
       "bin/espeak-ng-lin/*",
       "bin/espeak-ng-lin/espeak-ng-data/*",
       "bin/espeak-ng-lin/espeak-ng-data/lang/gmw/*",
-      "bin/pdfium-lin/*"
+      "bin/pdfium-win/*"
     ],
     "icon": [
       "icons/32x32.png",

@@ -284,10 +284,42 @@ pub fn read_file_base64(path: String) -> Result<String, String> {
         Some("txt") => "text/plain",
         Some("md") => "text/markdown",
         Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        Some("pptx") => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        Some("xlsx") => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        Some("xls") => "application/vnd.ms-excel",
+        Some("ods") => "application/vnd.oasis.opendocument.spreadsheet",
+        Some("odt") => "application/vnd.oasis.opendocument.text",
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        Some("svg") => "image/svg+xml",
+        Some("mp3") => "audio/mpeg",
+        Some("wav") => "audio/wav",
+        Some("ogg") => "audio/ogg",
+        Some("m4a") => "audio/mp4",
+        Some("flac") => "audio/flac",
+        Some("json") => "application/json",
+        Some("xml") => "application/xml",
+        Some("html" | "htm") => "text/html",
+        Some("css") => "text/css",
+        Some("csv") => "text/csv",
         _ => "application/octet-stream",
     };
 
     let data = std::fs::read(p).map_err(|e| format!("Failed to read file: {e}"))?;
     let b64 = STANDARD.encode(&data);
     Ok(format!("data:{};base64,{}", mime, b64))
+}
+
+/// Read a file and return the raw text content (for text-based files).
+/// For binary files (docx, pptx, xlsx, images, audio), use read_file_base64 instead.
+#[tauri::command]
+pub fn read_file_text(path: String) -> Result<String, String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err(format!("File not found: {}", p.display()));
+    }
+    std::fs::read_to_string(p).map_err(|e| format!("Failed to read file as text: {e}"))
 }

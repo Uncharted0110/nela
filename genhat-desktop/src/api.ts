@@ -153,6 +153,11 @@ export const Api = {
     return invoke<string>("read_file_base64", { path });
   },
 
+  /** Read a text-based file and return its content as a string. */
+  async readFileText(path: string): Promise<string> {
+    return invoke<string>("read_file_text", { path });
+  },
+
   /** Manually trigger a round of background enrichment. */
   async enrichRagDocuments(batchSize?: number): Promise<number> {
     return invoke<number>("enrich_rag_documents", { batchSize });

@@ -1996,3 +1996,626 @@ body {
   background-color: rgba(45, 212, 191, 0.1);
   border-color: rgba(45, 212, 191, 0.25);
 }
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   DOCUMENT VIEWER  (VS Code-style file renderer)
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Overlay ── */
+.dv-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  background-color: #1e1e1e;
+  animation: dvFadeIn 0.2s ease-out;
+}
+
+@keyframes dvFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Toolbar ── */
+.dv-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 42px;
+  padding: 0 12px;
+  background-color: #252526;
+  border-bottom: 1px solid #3c3c3c;
+  flex-shrink: 0;
+}
+
+.dv-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  color: #cccccc;
+}
+
+.dv-toolbar-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #e0e0e0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 300px;
+}
+
+.dv-toolbar-ext {
+  font-size: 0.72rem;
+  color: #888;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+
+.dv-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.dv-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: #cccccc;
+  min-width: 30px;
+  height: 30px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 0 6px;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.dv-btn:hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.dv-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.dv-close-btn:hover {
+  background-color: rgba(239, 68, 68, 0.2) !important;
+  color: #f87171 !important;
+}
+
+.dv-font-size {
+  font-size: 0.72rem;
+  color: #aaa;
+  min-width: 32px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.dv-zoom-label {
+  font-size: 0.72rem;
+  color: #aaa;
+  min-width: 42px;
+  text-align: center;
+}
+
+/* ── Content area ── */
+.dv-content {
+  flex: 1;
+  overflow: auto;
+  background-color: #1e1e1e;
+}
+
+.dv-content::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.dv-content::-webkit-scrollbar-track { background: transparent; }
+.dv-content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+}
+.dv-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* ── Loading & Error ── */
+.dv-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 100%;
+  color: #888;
+  font-size: 0.85rem;
+}
+
+.dv-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid #333;
+  border-top-color: var(--accent-primary, #2dd4bf);
+  border-radius: 50%;
+  animation: dvSpin 0.8s linear infinite;
+}
+
+@keyframes dvSpin {
+  to { transform: rotate(360deg); }
+}
+
+.dv-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 100%;
+  color: #888;
+  font-size: 0.85rem;
+}
+.dv-error p { color: #ef4444; }
+
+
+/* ═══════════════════ CODE VIEWER (VS Code style) ═══════════════════ */
+
+.dv-code-container {
+  display: flex;
+  min-height: 100%;
+  font-family: 'Consolas', 'Monaco', 'Cascadia Code', 'Fira Code', 'Courier New', monospace;
+  line-height: 1.6;
+  background-color: #1e1e1e;
+}
+
+/* Line numbers gutter */
+.dv-line-numbers {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 0;
+  text-align: right;
+  user-select: none;
+  background-color: #1e1e1e;
+  border-right: 1px solid #2d2d2d;
+  min-width: 50px;
+}
+
+.dv-line-num {
+  display: block;
+  padding: 0 12px 0 8px;
+  color: #858585;
+  line-height: 1.6;
+  font-size: inherit;
+}
+
+.dv-line-num:hover {
+  color: #cccccc;
+}
+
+/* Code block */
+.dv-code-pre {
+  flex: 1;
+  margin: 0;
+  padding: 12px 16px;
+  overflow-x: auto;
+  background: transparent !important;
+}
+
+.dv-code-pre code {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: 1.6;
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+/* ── highlight.js VS Code Dark+ theme overrides ── */
+.dv-code-container .hljs {
+  background: transparent !important;
+  color: #d4d4d4;
+}
+.dv-code-container .hljs-keyword       { color: #569cd6; }
+.dv-code-container .hljs-built_in      { color: #4ec9b0; }
+.dv-code-container .hljs-type          { color: #4ec9b0; }
+.dv-code-container .hljs-literal       { color: #569cd6; }
+.dv-code-container .hljs-number        { color: #b5cea8; }
+.dv-code-container .hljs-string        { color: #ce9178; }
+.dv-code-container .hljs-regexp        { color: #d16969; }
+.dv-code-container .hljs-symbol        { color: #d4d4d4; }
+.dv-code-container .hljs-variable      { color: #9cdcfe; }
+.dv-code-container .hljs-template-variable { color: #9cdcfe; }
+.dv-code-container .hljs-link          { color: #9cdcfe; }
+.dv-code-container .hljs-selector-id   { color: #9cdcfe; }
+.dv-code-container .hljs-selector-class { color: #d7ba7d; }
+.dv-code-container .hljs-selector-attr { color: #d7ba7d; }
+.dv-code-container .hljs-selector-pseudo { color: #d7ba7d; }
+.dv-code-container .hljs-tag           { color: #569cd6; }
+.dv-code-container .hljs-name          { color: #569cd6; }
+.dv-code-container .hljs-attr          { color: #9cdcfe; }
+.dv-code-container .hljs-attribute     { color: #9cdcfe; }
+.dv-code-container .hljs-comment       { color: #6a9955; font-style: italic; }
+.dv-code-container .hljs-doctag        { color: #608b4e; }
+.dv-code-container .hljs-meta          { color: #569cd6; }
+.dv-code-container .hljs-meta .hljs-keyword { color: #569cd6; }
+.dv-code-container .hljs-meta .hljs-string  { color: #ce9178; }
+.dv-code-container .hljs-section       { color: #dcdcaa; }
+.dv-code-container .hljs-title         { color: #dcdcaa; }
+.dv-code-container .hljs-title.function_ { color: #dcdcaa; }
+.dv-code-container .hljs-title.class_  { color: #4ec9b0; }
+.dv-code-container .hljs-params        { color: #d4d4d4; }
+.dv-code-container .hljs-formula       { color: #b5cea8; }
+.dv-code-container .hljs-operator      { color: #d4d4d4; }
+.dv-code-container .hljs-property      { color: #9cdcfe; }
+.dv-code-container .hljs-punctuation   { color: #d4d4d4; }
+.dv-code-container .hljs-addition      { color: #b5cea8; background: rgba(155, 185, 85, 0.1); }
+.dv-code-container .hljs-deletion      { color: #ce9178; background: rgba(206, 145, 120, 0.1); }
+
+
+/* ═══════════════════ MARKDOWN VIEWER ═══════════════════ */
+
+.dv-markdown-container {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 32px 40px;
+  color: #d4d4d4;
+  font-size: 0.92rem;
+  line-height: 1.7;
+}
+
+.dv-markdown-container h1,
+.dv-markdown-container h2,
+.dv-markdown-container h3,
+.dv-markdown-container h4 {
+  color: #e0e0e0;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  font-weight: 600;
+  border-bottom: 1px solid #333;
+  padding-bottom: 0.3em;
+}
+
+.dv-markdown-container h1 { font-size: 1.6em; }
+.dv-markdown-container h2 { font-size: 1.3em; }
+.dv-markdown-container h3 { font-size: 1.1em; border-bottom: none; }
+.dv-markdown-container h4 { font-size: 1em; border-bottom: none; }
+
+.dv-markdown-container p {
+  margin: 0.6em 0;
+}
+
+.dv-markdown-container code {
+  font-family: 'Consolas', 'Monaco', monospace;
+  background: #2d2d2d;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.88em;
+  color: #ce9178;
+}
+
+.dv-markdown-container pre {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 12px 16px;
+  overflow-x: auto;
+  margin: 1em 0;
+}
+
+.dv-markdown-container pre code {
+  background: transparent;
+  padding: 0;
+  color: #d4d4d4;
+}
+
+.dv-markdown-container blockquote {
+  border-left: 3px solid #569cd6;
+  margin: 1em 0;
+  padding: 0.5em 16px;
+  background: rgba(86, 156, 214, 0.06);
+  color: #aaa;
+}
+
+.dv-markdown-container a {
+  color: #4fc1ff;
+  text-decoration: none;
+}
+.dv-markdown-container a:hover { text-decoration: underline; }
+
+.dv-markdown-container table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+}
+
+.dv-markdown-container th,
+.dv-markdown-container td {
+  border: 1px solid #3c3c3c;
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.dv-markdown-container th {
+  background: #2d2d2d;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.dv-markdown-container tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.dv-markdown-container ul,
+.dv-markdown-container ol {
+  padding-left: 24px;
+  margin: 0.5em 0;
+}
+
+.dv-markdown-container li {
+  margin: 0.25em 0;
+}
+
+.dv-markdown-container hr {
+  border: none;
+  border-top: 1px solid #333;
+  margin: 2em 0;
+}
+
+.dv-markdown-container img {
+  max-width: 100%;
+  border-radius: 4px;
+}
+
+
+/* ═══════════════════ DOCX VIEWER ═══════════════════ */
+
+.dv-docx-wrapper {
+  display: flex;
+  justify-content: center;
+  padding: 20px;
+  background-color: #3c3c3c;
+  min-height: 100%;
+}
+
+.dv-docx-container {
+  background: #ffffff;
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.4);
+  border-radius: 2px;
+  max-width: 900px;
+  width: 100%;
+  min-height: 100%;
+}
+
+/* docx-preview library injects its own wrapper */
+.dv-docx-container .docx-wrapper {
+  background: #ffffff !important;
+  padding: 0 !important;
+}
+
+.dv-docx-container .docx-wrapper > section.docx {
+  box-shadow: none !important;
+  margin: 0 auto !important;
+  padding: 40px 60px !important;
+}
+
+
+/* ═══════════════════ IMAGE VIEWER ═══════════════════ */
+
+.dv-image-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.dv-image-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid #2d2d2d;
+  background: #252526;
+}
+
+.dv-image-scroll {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 20px;
+  background-color: #1e1e1e;
+  /* Checkerboard pattern for transparent images */
+  background-image:
+    linear-gradient(45deg, #252526 25%, transparent 25%),
+    linear-gradient(-45deg, #252526 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #252526 75%),
+    linear-gradient(-45deg, transparent 75%, #252526 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+}
+
+.dv-image {
+  max-width: none;
+  transition: transform 0.15s ease;
+  border-radius: 2px;
+}
+
+
+/* ═══════════════════ AUDIO VIEWER ═══════════════════ */
+
+.dv-audio-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 20px;
+  background: linear-gradient(180deg, #1e1e1e 0%, #252526 100%);
+}
+
+.dv-audio-icon {
+  color: #569cd6;
+  opacity: 0.5;
+}
+
+.dv-audio-title {
+  color: #d4d4d4;
+  font-size: 1.1rem;
+  font-weight: 500;
+}
+
+.dv-audio-player {
+  width: 400px;
+  max-width: 90%;
+  filter: invert(0.85) hue-rotate(180deg);
+  border-radius: 8px;
+}
+
+
+/* ═══════════════════ PPTX VIEWER ═══════════════════ */
+
+.dv-pptx-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.dv-pptx-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 10px;
+  background: #252526;
+  border-bottom: 1px solid #3c3c3c;
+}
+
+.dv-pptx-counter {
+  font-size: 0.82rem;
+  color: #ccc;
+  min-width: 120px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.dv-pptx-slide {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow: auto;
+}
+
+.dv-pptx-slide-content {
+  background: #ffffff;
+  color: #1e1e1e;
+  border-radius: 4px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  padding: 40px 48px;
+  max-width: 900px;
+  width: 100%;
+  min-height: 400px;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.dv-pptx-slide-content p {
+  margin: 0.4em 0;
+}
+
+.dv-pptx-slide-content strong {
+  font-size: 1.2em;
+  color: #1a1a1a;
+}
+
+.dv-pptx-slide-content ul {
+  padding-left: 24px;
+  margin: 0.5em 0;
+}
+
+.dv-pptx-slide-content li {
+  margin: 0.3em 0;
+}
+
+.dv-pptx-divider {
+  border: none;
+  border-top: 1px solid #e0e0e0;
+  margin: 16px 0;
+}
+
+.dv-pptx-thumbs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  background: #252526;
+  border-top: 1px solid #3c3c3c;
+  overflow-x: auto;
+  justify-content: center;
+}
+
+.dv-pptx-thumb {
+  min-width: 36px;
+  height: 28px;
+  border: 1px solid #555;
+  border-radius: 3px;
+  background: #2d2d2d;
+  color: #aaa;
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.dv-pptx-thumb:hover {
+  border-color: #888;
+  color: #eee;
+}
+
+.dv-pptx-thumb.active {
+  border-color: var(--accent-primary, #2dd4bf);
+  background: rgba(45, 212, 191, 0.15);
+  color: var(--accent-primary, #2dd4bf);
+  font-weight: 600;
+}
+
+
+/* ═══════════════════ SPREADSHEET INFO ═══════════════════ */
+
+.dv-spreadsheet-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 12px;
+  color: #888;
+}
+
+.dv-spreadsheet-info h3 {
+  color: #ccc;
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.dv-spreadsheet-info p {
+  max-width: 400px;
+  text-align: center;
+  line-height: 1.5;
+  font-size: 0.85rem;
+}
+
+.dv-hint {
+  color: #6a9955;
+  font-style: italic;
+  font-size: 0.8rem !important;
+}

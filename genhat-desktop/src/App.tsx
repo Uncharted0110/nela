@@ -30,7 +30,19 @@ import { KITTEN_TTS_VOICES } from "./types";
 import ChatWindow from "./components/ChatWindow";
 import ModelSelector from "./components/ModelSelector";
 import PdfViewer from "./components/PdfViewer";
+import DocumentViewer from "./components/DocumentViewer";
 import "./App.css";
+
+/** Extensions the DocumentViewer can render (non-PDF). */
+const VIEWABLE_EXTS = new Set([
+  "docx", "pptx", "xlsx", "xls", "ods",
+  "txt", "md", "csv", "tsv", "json", "xml", "html", "htm",
+  "rs", "py", "js", "ts", "jsx", "tsx", "java", "c", "cpp",
+  "h", "go", "rb", "sh", "css", "scss", "sql", "log", "ini", "cfg",
+  "toml", "yaml", "yml",
+  "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg",
+  "mp3", "wav", "ogg", "m4a", "flac",
+]);
 
 /* ── Mode metadata for the sidebar ──────────────────────────────────────── */
 const MODE_CONFIG: {
@@ -99,6 +111,12 @@ function App() {
     title: string;
   } | null>(null);
   const [pdfLoading, setPdfLoading] = useState(false);
+
+  // ── Document Viewer state (non-PDF formats) ────────────────────────────
+  const [docViewerFile, setDocViewerFile] = useState<{
+    filePath: string;
+    title: string;
+  } | null>(null);
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -238,8 +256,11 @@ function App() {
           {
             name: "Documents",
             extensions: [
-              "pdf", "docx", "pptx", "txt", "md", "rs", "py", "js", "ts",
-              "java", "c", "cpp", "go", "toml", "yaml", "json", "xml", "csv",
+              "pdf", "docx", "pptx", "xlsx", "xls", "ods",
+              "txt", "md", "csv", "tsv", "json", "xml", "html", "htm",
+              "rs", "py", "js", "ts", "jsx", "tsx", "java", "c", "cpp",
+              "h", "go", "rb", "sh", "toml", "yaml", "yml", "css",
+              "scss", "sql", "log", "ini", "cfg",
               "mp3", "wav", "m4a", "ogg", "flac",
             ],
           },
@@ -284,26 +305,36 @@ function App() {
     }
   };
 
-  // ── PDF Viewer handlers ───────────────────────────────────────────────────
+  // ── Viewer handlers ────────────────────────────────────────────────────────
 
-  const openPdfViewer = async (doc: IngestionStatus) => {
-    const ext = doc.file_path.split(".").pop()?.toLowerCase();
-    if (ext !== "pdf") return; // only PDFs are viewable
+  /** Open the right viewer for any supported document format. */
+  const openDocViewer = async (doc: IngestionStatus) => {
+    const ext = doc.file_path.split(".").pop()?.toLowerCase() || "";
 
-    try {
-      setPdfLoading(true);
-      const data = await Api.readFileBase64(doc.file_path);
-      setPdfViewerData({ data, title: doc.title });
-    } catch (e) {
-      console.error("Failed to load PDF:", e);
-      alert(`Failed to open PDF: ${e}`);
-    } finally {
-      setPdfLoading(false);
+    if (ext === "pdf") {
+      // PDF uses the dedicated PdfViewer
+      try {
+        setPdfLoading(true);
+        const data = await Api.readFileBase64(doc.file_path);
+        setPdfViewerData({ data, title: doc.title });
+      } catch (e) {
+        console.error("Failed to load PDF:", e);
+        alert(`Failed to open PDF: ${e}`);
+      } finally {
+        setPdfLoading(false);
+      }
+    } else if (VIEWABLE_EXTS.has(ext)) {
+      // Everything else uses the universal DocumentViewer
+      setDocViewerFile({ filePath: doc.file_path, title: doc.title });
     }
   };
 
   const closePdfViewer = () => {
     setPdfViewerData(null);
+  };
+
+  const closeDocViewer = () => {
+    setDocViewerFile(null);
   };
 
   // ── Cancel handler ────────────────────────────────────────────────────────
@@ -863,6 +894,15 @@ function App() {
             onClose={closePdfViewer}
           />
         )}
+
+        {/* ── Document Viewer Overlay (non-PDF) ── */}
+        {docViewerFile && (
+          <DocumentViewer
+            filePath={docViewerFile.filePath}
+            title={docViewerFile.title}
+            onClose={closeDocViewer}
+          />
+        )}
       </main>
 
       {/* ══════════ RIGHT SIDEBAR — Knowledge Base ══════════ */}
@@ -927,13 +967,14 @@ function App() {
             ) : (
               <div className="rag-doc-list">
                 {ragDocs.map((doc) => {
-                  const isPdf = doc.file_path?.toLowerCase().endsWith(".pdf");
+                  const ext = doc.file_path?.split(".").pop()?.toLowerCase() || "";
+                  const isViewable = ext === "pdf" || VIEWABLE_EXTS.has(ext);
                   return (
                   <div
                     key={doc.doc_id}
-                    className={`rag-doc-item${isPdf ? " clickable" : ""}`}
-                    onClick={() => isPdf && openPdfViewer(doc)}
-                    title={isPdf ? "Click to view PDF" : doc.title}
+                    className={`rag-doc-item${isViewable ? " clickable" : ""}`}
+                    onClick={() => isViewable && openDocViewer(doc)}
+                    title={isViewable ? `Click to view ${ext.toUpperCase()}` : doc.title}
                   >
                     <FileText size={14} className="doc-icon" />
                     <span className="doc-title">{doc.title}</span>

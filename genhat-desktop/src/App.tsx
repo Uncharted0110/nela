@@ -55,9 +55,19 @@ function App() {
   const [selectedTtsEngine, setSelectedTtsEngine] = useState("");
   const [ttsVoice, setTtsVoice] = useState<KittenTtsVoice>("Leo");
   const [ttsSpeed, setTtsSpeed] = useState(1.0);
+  const [ttsGenerating, setTtsGenerating] = useState(false);
+  const [ttsElapsedTime, setTtsElapsedTime] = useState(0);
+  const [ttsGenerationTime, setTtsGenerationTime] = useState<number | null>(null);
+  const ttsIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const [visionModels, setVisionModels] = useState<RegisteredModel[]>([]);
   const [selectedVisionModel, setSelectedVisionModel] = useState("");
+
+  // ── Response time tracking for all modes ────────────────────────────────────
+  const [generalElapsedTime, setGeneralElapsedTime] = useState(0);
+  const [generalGenerationTime, setGeneralGenerationTime] = useState<number | null>(null);
+  const [generalGenerating, setGeneralGenerating] = useState(false);
+  const generalIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // ── Chat state ─────────────────────────────────────────────────────────────
   const [chatMode, setChatMode] = useState<ChatMode>("text");
@@ -117,6 +127,14 @@ function App() {
       unlisten?.();
     };
   }, [chatMode]);
+
+  // Clean up TTS and general timers on unmount
+  useEffect(() => {
+    return () => {
+      if (ttsIntervalRef.current) clearInterval(ttsIntervalRef.current);
+      if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
+    };
+  }, []);
 
   // ── Model helpers ──────────────────────────────────────────────────────────
 
@@ -291,12 +309,28 @@ function App() {
       // ── RAG Mode (streaming) ────────────────────────────────────────────
       if (chatMode === "rag") {
         try {
+          // Start timer
+          setGeneralGenerating(true);
+          setGeneralElapsedTime(0);
+          setGeneralGenerationTime(null);
+          const ragStartTime = Date.now();
+
+          // Set up interval to update elapsed time
+          if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
+          generalIntervalRef.current = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - ragStartTime) / 100) / 10;
+            setGeneralElapsedTime(elapsed);
+          }, 100);
+
           // Phase 1: Retrieval — sources come back immediately
           const setup = await Api.queryRagStream(text);
           setRagResult({ answer: "", sources: setup.sources });
 
           // Handle empty results
           if (!setup.prompt) {
+            // Stop timer on empty results
+            if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
+            setGeneralGenerating(false);
             const msg =
               setup.sources.length === 0
                 ? "No relevant documents found. Please ingest some documents first."
@@ -321,6 +355,13 @@ function App() {
               setStreamingContent((prev) => prev + chunk);
             },
             () => {
+              // Stop timer
+              if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
+              const totalTime = Math.floor((Date.now() - ragStartTime) / 100) / 10;
+              setGeneralGenerating(false);
+              setGeneralElapsedTime(totalTime);
+              setGeneralGenerationTime(totalTime);
+
               setRagResult((prev) =>
                 prev ? { ...prev, answer: fullAnswer } : null
               );
@@ -349,6 +390,9 @@ function App() {
               setLoading(false);
             },
             (err) => {
+              // Stop timer on error
+              if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
+              setGeneralGenerating(false);
               console.error("RAG stream error:", err);
               setMessages((prev) => [
                 ...prev,
@@ -360,6 +404,9 @@ function App() {
             ctrl.signal
           );
         } catch (e) {
+          // Stop timer on error
+          if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
+          setGeneralGenerating(false);
           console.error(e);
           setMessages((prev) => [
             ...prev,
@@ -373,6 +420,19 @@ function App() {
       // ── Audio Mode ──────────────────────────────────────────────────────
       if (chatMode === "audio" && selectedTtsEngine) {
         try {
+          // Start timer
+          setTtsGenerating(true);
+          setTtsElapsedTime(0);
+          setTtsGenerationTime(null);
+          const startTime = Date.now();
+
+          // Set up interval to update elapsed time
+          if (ttsIntervalRef.current) clearInterval(ttsIntervalRef.current);
+          ttsIntervalRef.current = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - startTime) / 100) / 10; // One decimal place, in seconds
+            setTtsElapsedTime(elapsed);
+          }, 100);
+
           const audioUrl = await Api.generateSpeech(
             text,
             {
@@ -380,6 +440,14 @@ function App() {
               speed: ttsSpeed,
             }
           );
+
+          // Stop timer and calculate total time
+          if (ttsIntervalRef.current) clearInterval(ttsIntervalRef.current);
+          const totalTime = Math.floor((Date.now() - startTime) / 100) / 10; // One decimal place, in seconds
+          setTtsGenerating(false);
+          setTtsElapsedTime(totalTime);
+          setTtsGenerationTime(totalTime);
+
           setAudioOutput(audioUrl);
           setMessages((prev) => [
             ...prev,
@@ -390,6 +458,9 @@ function App() {
           ]);
         } catch (e) {
           console.error(e);
+          // Stop timer on error
+          if (ttsIntervalRef.current) clearInterval(ttsIntervalRef.current);
+          setTtsGenerating(false);
           setMessages((prev) => [
             ...prev,
             { role: "assistant", content: `Error generating audio: ${e}` },
@@ -411,6 +482,19 @@ function App() {
         }
 
         try {
+          // Start timer
+          setGeneralGenerating(true);
+          setGeneralElapsedTime(0);
+          setGeneralGenerationTime(null);
+          const startTime = Date.now();
+
+          // Set up interval to update elapsed time
+          if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
+          generalIntervalRef.current = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - startTime) / 100) / 10;
+            setGeneralElapsedTime(elapsed);
+          }, 100);
+
           // Clean up any previous listener
           visionUnlistenRef.current?.();
           visionUnlistenRef.current = null;
@@ -421,6 +505,13 @@ function App() {
             "vision-stream",
             (event) => {
               if (event.payload.done) {
+                // Stop timer
+                if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
+                const totalTime = Math.floor((Date.now() - startTime) / 100) / 10;
+                setGeneralGenerating(false);
+                setGeneralElapsedTime(totalTime);
+                setGeneralGenerationTime(totalTime);
+
                 setLoading(false);
                 if (visionResponse) {
                   setMessages((prev) => [
@@ -447,6 +538,9 @@ function App() {
           );
         } catch (e) {
           console.error(e);
+          // Stop timer on error
+          if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
+          setGeneralGenerating(false);
           setMessages((prev) => [
             ...prev,
             { role: "assistant", content: `Vision error: ${e}` },
@@ -459,6 +553,19 @@ function App() {
       }
 
       // ── Text Chat Mode (streaming via SSE) ─────────────────────────────
+      // Start timer
+      setGeneralGenerating(true);
+      setGeneralElapsedTime(0);
+      setGeneralGenerationTime(null);
+      const chatStartTime = Date.now();
+
+      // Set up interval to update elapsed time
+      if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
+      generalIntervalRef.current = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - chatStartTime) / 100) / 10;
+        setGeneralElapsedTime(elapsed);
+      }, 100);
+
       let fullResponse = "";
       Api.streamChat(
         [...messages, newMsg],
@@ -467,6 +574,13 @@ function App() {
           fullResponse += chunk;
         },
         () => {
+          // Stop timer
+          if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
+          const totalTime = Math.floor((Date.now() - chatStartTime) / 100) / 10;
+          setGeneralGenerating(false);
+          setGeneralElapsedTime(totalTime);
+          setGeneralGenerationTime(totalTime);
+
           setLoading(false);
           if (fullResponse) {
             setMessages((prev) => [
@@ -477,6 +591,9 @@ function App() {
           }
         },
         (err) => {
+          // Stop timer on error
+          if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
+          setGeneralGenerating(false);
           console.error("Stream error", err);
           setMessages((prev) => [
             ...prev,
@@ -488,6 +605,9 @@ function App() {
         ctrl.signal
       );
     } catch (err) {
+      // Stop timer on error
+      if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
+      setGeneralGenerating(false);
       console.error(err);
       setMessages((prev) => [
         ...prev,
@@ -805,6 +925,13 @@ function App() {
           audioSrc={audioOutput}
           placeholder={getPlaceholder()}
           mediaAssets={mediaAssets}
+          chatMode={chatMode}
+          ttsGenerating={ttsGenerating}
+          ttsElapsedTime={ttsElapsedTime}
+          ttsGenerationTime={ttsGenerationTime}
+          generalGenerating={generalGenerating}
+          generalElapsedTime={generalElapsedTime}
+          generalGenerationTime={generalGenerationTime}
         />
       </main>
     </div>

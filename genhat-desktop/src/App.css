@@ -848,6 +848,97 @@ body {
   border: 1px solid var(--border-subtle);
 }
 
+.tts-completion-time {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tts-completion-time::before {
+  content: "✓";
+  color: var(--success);
+  font-weight: bold;
+}
+
+
+/* ── TTS Timer ── */
+.tts-timer {
+  margin: 12px 48px;
+  padding: 12px 16px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--accent-glow);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+.tts-timer-pulse {
+  width: 6px;
+  height: 6px;
+  background: var(--accent-primary);
+  border-radius: 50%;
+  animation: pulse-glow 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 4px var(--accent-primary);
+  }
+  50% {
+    opacity: 0.5;
+    box-shadow: 0 0 8px var(--accent-primary);
+  }
+}
+
+.tts-timer-text {
+  font-size: 13px;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.tts-timer-value {
+  color: var(--accent-primary);
+  font-weight: 700;
+  font-family: 'Monaco', 'Menlo', monospace;
+  min-width: 40px;
+}
+
+
+/* ── Response Completion Badge ── */
+.response-completion-badge {
+  margin: 12px 48px;
+  padding: 8px 14px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.response-time-indicator {
+  color: var(--success);
+  font-weight: bold;
+}
+
+.response-time-text {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
 
 /* ══════════════════════════════════════════════════════════════════════════════
    INPUT AREA

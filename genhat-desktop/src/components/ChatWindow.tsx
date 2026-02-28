@@ -51,6 +51,16 @@ interface ChatWindowProps {
   placeholder?: string;
   /** Media assets (images/tables) keyed by message index. */
   mediaAssets?: Record<number, MediaAsset[]>;
+  /** Chat mode for picking which timer to display */
+  chatMode?: string;
+  /** TTS generation state */
+  ttsGenerating?: boolean;
+  ttsElapsedTime?: number;
+  ttsGenerationTime?: number | null;
+  /** General response time tracking for chat, vision, RAG */
+  generalGenerating?: boolean;
+  generalElapsedTime?: number;
+  generalGenerationTime?: number | null;
 }
 
 /** Inline gallery for extracted images/tables attached to an assistant message. */
@@ -128,6 +138,13 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   audioSrc,
   placeholder = "Message NELA...",
   mediaAssets = {},
+  chatMode = "text",
+  ttsGenerating = false,
+  ttsElapsedTime = 0,
+  ttsGenerationTime = null,
+  generalGenerating = false,
+  generalElapsedTime = 0,
+  generalGenerationTime = null,
 }) => {
   const [inputObj, setInputObj] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
@@ -196,10 +213,50 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
           </div>
         )}
         
+        {/* Response Time Timer - Audio Mode */}
+        {chatMode === "audio" && ttsGenerating && (
+          <div className="tts-timer">
+            <div className="tts-timer-pulse" />
+            <span className="tts-timer-text">
+              Generating speech... <span className="tts-timer-value">{ttsElapsedTime.toFixed(1)}s</span>
+            </span>
+          </div>
+        )}
+
+        {/* Response Time Timer - Chat/Vision/RAG Modes */}
+        {chatMode !== "audio" && generalGenerating && (
+          <div className="tts-timer">
+            <div className="tts-timer-pulse" />
+            <span className="tts-timer-text">
+              {chatMode === "vision" && "Analyzing image... "}
+              {chatMode === "rag" && "Processing query... "}
+              {chatMode === "text" && "Generating response... "}
+              <span className="tts-timer-value">{generalElapsedTime.toFixed(1)}s</span>
+            </span>
+          </div>
+        )}
+
         {/* Audio Player if generated */}
         {audioSrc && (
           <div className="audio-player">
+            {ttsGenerationTime !== null && (
+              <div className="tts-completion-time">
+                Generated in {ttsGenerationTime.toFixed(1)}s
+              </div>
+            )}
             <audio controls src={audioSrc} autoPlay />
+          </div>
+        )}
+
+        {/* Response time completion display for non-audio modes */}
+        {chatMode !== "audio" && generalGenerationTime !== null && !generalGenerating && (
+          <div className="response-completion-badge">
+            <span className="response-time-indicator">✓</span>
+            <span className="response-time-text">
+              {chatMode === "vision" && `Analyzed in ${generalGenerationTime.toFixed(1)}s`}
+              {chatMode === "rag" && `Processed in ${generalGenerationTime.toFixed(1)}s`}
+              {chatMode === "text" && `Generated in ${generalGenerationTime.toFixed(1)}s`}
+            </span>
           </div>
         )}
 

@@ -1,0 +1,13 @@
+{
+  "bundle": {
+    "resources": {
+      "bin/llama-mac/*": "bin/llama-mac/",
+      "bin/espeak-ng-mac/*": "bin/espeak-ng-mac/",
+      "bin/espeak-ng-mac/espeak-ng-data/*": "bin/espeak-ng-mac/espeak-ng-data/",
+      "bin/espeak-ng-mac/espeak-ng-data/lang/gmw/*": "bin/espeak-ng-mac/espeak-ng-data/lang/gmw/",
+      "bin/espeak-ng-mac/espeak-ng-data/voices/!v/*": "bin/espeak-ng-mac/espeak-ng-data/voices/!v/",
+      "bin/espeak-ng-mac/espeak-ng-data/voices/mb/*": "bin/espeak-ng-mac/espeak-ng-data/voices/mb/",
+      "bin/espeak-ng-mac/espeak-ng-data/mbrola_ph/*": "bin/espeak-ng-mac/espeak-ng-data/mbrola_ph/"
+    }
+  }
+}

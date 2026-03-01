@@ -76,18 +76,18 @@ function App() {
   const [selectedTtsEngine, setSelectedTtsEngine] = useState("");
   const [ttsVoice, setTtsVoice] = useState<KittenTtsVoice>("Leo");
   const [ttsSpeed, setTtsSpeed] = useState(1.0);
-  const [ttsGenerating, setTtsGenerating] = useState(false);
-  const [ttsElapsedTime, setTtsElapsedTime] = useState(0);
-  const [ttsGenerationTime, setTtsGenerationTime] = useState<number | null>(null);
+  const [_ttsGenerating, setTtsGenerating] = useState(false);
+  const [_ttsElapsedTime, setTtsElapsedTime] = useState(0);
+  const [_ttsGenerationTime, setTtsGenerationTime] = useState<number | null>(null);
   const ttsIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const [visionModels, setVisionModels] = useState<RegisteredModel[]>([]);
   const [selectedVisionModel, setSelectedVisionModel] = useState("");
 
   // ── Response time tracking for all modes ────────────────────────────────────
-  const [generalElapsedTime, setGeneralElapsedTime] = useState(0);
-  const [generalGenerationTime, setGeneralGenerationTime] = useState<number | null>(null);
-  const [generalGenerating, setGeneralGenerating] = useState(false);
+  const [_generalElapsedTime, setGeneralElapsedTime] = useState(0);
+  const [_generalGenerationTime, setGeneralGenerationTime] = useState<number | null>(null);
+  const [_generalGenerating, setGeneralGenerating] = useState(false);
   const generalIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // ── Chat state ─────────────────────────────────────────────────────────────

@@ -1,0 +1,11 @@
+{
+  "bundle": {
+    "resources": {
+      "bin/llama-lin/*": "bin/llama-lin/",
+      "bin/pdfium-lin/*": "bin/pdfium-lin/",
+      "bin/espeak-ng-lin/*": "bin/espeak-ng-lin/",
+      "bin/espeak-ng-lin/espeak-ng-data/*": "bin/espeak-ng-lin/espeak-ng-data/",
+      "bin/espeak-ng-lin/espeak-ng-data/lang/gmw/*": "bin/espeak-ng-lin/espeak-ng-data/lang/gmw/"
+    }
+  }
+}

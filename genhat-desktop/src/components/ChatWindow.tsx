@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import MarkdownRenderer from "./MarkdownRenderer";
 import { Api } from "../api";
-import type { MediaAsset, IngestionStatus } from "../types";
+import type { ChatMessage, MediaAsset, IngestionStatus } from "../types";
 
 /** Copy button for a full assistant response */
 const CopyMsgButton: React.FC<{ text: string }> = ({ text }) => {
@@ -41,7 +41,7 @@ const CopyMsgButton: React.FC<{ text: string }> = ({ text }) => {
 };
 
 interface ChatWindowProps {
-  messages: { role: string; content: string }[];
+  messages: ChatMessage[];
   streamingContent: string;
   isLoading: boolean;
   onSend: (text: string) => void;

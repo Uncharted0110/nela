@@ -55,6 +55,7 @@ tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
 # ── Parakeet ASR audio preprocessing ──
 hound = "3"
 realfft = "3"
+symphonia = { version = "0.5", features = ["mp3", "aac", "flac", "ogg", "pcm", "wav"] }
 
 # ── KittenTTS text preprocessing ──
 regex = "1"

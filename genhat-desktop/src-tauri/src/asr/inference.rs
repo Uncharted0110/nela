@@ -787,6 +787,10 @@ fn argmax(slice: &[f32]) -> usize {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Load an audio file and return mono f32 samples at `target_sr`.
+///
+/// WAV files are loaded natively via `hound`.  All other formats (MP3, FLAC,
+/// OGG/Vorbis, AAC/M4A, etc.) are decoded in-process via `symphonia` — no
+/// external tools like ffmpeg are required.
 fn load_audio(path: &Path, target_sr: u32) -> Result<Vec<f32>, String> {
     let ext = path
         .extension()
@@ -797,12 +801,7 @@ fn load_audio(path: &Path, target_sr: u32) -> Result<Vec<f32>, String> {
     if ext == "wav" {
         load_wav(path, target_sr)
     } else {
-        // Convert to WAV via ffmpeg then load.
-        let temp_dir =
-            tempfile::tempdir().map_err(|e| format!("Failed to create temp dir: {e}"))?;
-        let wav_path = temp_dir.path().join("converted.wav");
-        convert_to_wav(path, &wav_path, target_sr)?;
-        load_wav(&wav_path, target_sr)
+        load_with_symphonia(path, target_sr)
     }
 }
 
@@ -848,38 +847,122 @@ fn load_wav(path: &Path, target_sr: u32) -> Result<Vec<f32>, String> {
     }
 }
 
-/// Convert any audio format to 16-bit mono WAV at `target_sr` via ffmpeg.
-fn convert_to_wav(input: &Path, output: &Path, target_sr: u32) -> Result<(), String> {
-    let status = std::process::Command::new("ffmpeg")
-        .args([
-            "-i",
-            &input.to_string_lossy(),
-            "-ar",
-            &target_sr.to_string(),
-            "-ac",
-            "1",
-            "-sample_fmt",
-            "s16",
-            "-f",
-            "wav",
-            "-y",
-            &output.to_string_lossy(),
-        ])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
-        .status()
-        .map_err(|e| {
-            format!(
-                "Failed to run ffmpeg (is it installed?): {e}. \
-                 Non-WAV audio files require ffmpeg for format conversion."
-            )
-        })?;
+/// Decode any audio format supported by Symphonia (MP3, FLAC, OGG, AAC, WAV, etc.)
+/// and return mono f32 samples at `target_sr`.
+fn load_with_symphonia(path: &Path, target_sr: u32) -> Result<Vec<f32>, String> {
+    use symphonia::core::audio::SampleBuffer;
+    use symphonia::core::codecs::DecoderOptions;
+    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
 
-    if !status.success() {
-        return Err(format!("ffmpeg conversion failed (exit {})", status));
+    let file = std::fs::File::open(path)
+        .map_err(|e| format!("Failed to open audio file '{}': {e}", path.display()))?;
+
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+
+    // Provide a hint about the file extension so Symphonia can pick the right demuxer.
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
     }
 
-    Ok(())
+    let probed = symphonia::default::get_probe()
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
+        .map_err(|e| format!("Unsupported audio format '{}': {e}", path.display()))?;
+
+    let mut format_reader = probed.format;
+
+    // Find the first audio track.
+    let track = format_reader
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL)
+        .ok_or_else(|| format!("No audio track found in '{}'", path.display()))?;
+
+    let track_id = track.id;
+    let source_sr = track
+        .codec_params
+        .sample_rate
+        .ok_or("Audio track has no sample rate")?;
+    let channels = track
+        .codec_params
+        .channels
+        .map(|c| c.count())
+        .unwrap_or(1);
+
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &DecoderOptions::default())
+        .map_err(|e| format!("Failed to create decoder: {e}"))?;
+
+    let mut all_samples: Vec<f32> = Vec::new();
+
+    // Decode all packets from the selected track.
+    loop {
+        let packet = match format_reader.next_packet() {
+            Ok(p) => p,
+            Err(symphonia::core::errors::Error::IoError(ref e))
+                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                break; // End of stream
+            }
+            Err(e) => {
+                log::warn!("Symphonia packet read error (continuing): {e}");
+                break;
+            }
+        };
+
+        // Skip packets from other tracks (if any).
+        if packet.track_id() != track_id {
+            continue;
+        }
+
+        let decoded = match decoder.decode(&packet) {
+            Ok(d) => d,
+            Err(symphonia::core::errors::Error::DecodeError(e)) => {
+                log::warn!("Symphonia decode error (skipping packet): {e}");
+                continue;
+            }
+            Err(e) => {
+                log::warn!("Symphonia decode error (stopping): {e}");
+                break;
+            }
+        };
+
+        let spec = *decoded.spec();
+        let num_frames = decoded.capacity();
+        let mut sample_buf = SampleBuffer::<f32>::new(num_frames as u64, spec);
+        sample_buf.copy_interleaved_ref(decoded);
+
+        all_samples.extend_from_slice(sample_buf.samples());
+    }
+
+    if all_samples.is_empty() {
+        return Err(format!("No audio samples decoded from '{}'", path.display()));
+    }
+
+    // Downmix to mono.
+    let mono: Vec<f32> = if channels <= 1 {
+        all_samples
+    } else {
+        all_samples
+            .chunks(channels)
+            .map(|chunk| chunk.iter().sum::<f32>() / channels as f32)
+            .collect()
+    };
+
+    // Resample if needed.
+    if source_sr == target_sr {
+        Ok(mono)
+    } else {
+        Ok(resample_linear(&mono, source_sr, target_sr))
+    }
 }
 
 /// Simple linear-interpolation resampling.

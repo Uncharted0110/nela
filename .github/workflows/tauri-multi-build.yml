@@ -9,7 +9,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest]  # , ubuntu-latest, macos-latest
+        include:
+          - os: windows-latest
+            drive_folder: Windows
+          # - os: ubuntu-latest
+          #   drive_folder: Linux
+          # - os: macos-latest
+          #   drive_folder: Mac
 
     runs-on: ${{ matrix.os }}
 
@@ -47,34 +53,44 @@ jobs:
 
       # Build Tauri
       - name: Build Tauri App
-        run: npx tauri build --verbose
+        run: npx tauri build
         working-directory: genhat-desktop
 
-      # Collect Windows Build Artifact
-      - name: Locate Windows Build
+      # Locate Build Artifact (Windows)
+      - name: Locate Build Artifact (Windows)
+        if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $file = Get-ChildItem -Path src-tauri/target/release -Recurse -Include *.exe,*.msi | Select-Object -First 1
+          $file = Get-ChildItem -Path genhat-desktop/src-tauri/target/release -Recurse -Include *.exe,*.msi | Select-Object -First 1
           echo "ARTIFACT_PATH=$($file.FullName)" >> $env:GITHUB_ENV
           echo "ARTIFACT_NAME=$($file.Name)" >> $env:GITHUB_ENV
 
-      # - name: Locate Linux Build
+      # - name: Locate Build Artifact (Linux)
       #   if: matrix.os == 'ubuntu-latest'
       #   run: |
-      #     FILE=$(find src-tauri/target/release -type f \( -name "*.AppImage" -o -name "*.deb" \) | head -n 1)
+      #     FILE=$(find genhat-desktop/src-tauri/target/release -type f \( -name "*.AppImage" -o -name "*.deb" \) | head -n 1)
       #     echo "ARTIFACT_PATH=$FILE" >> $GITHUB_ENV
       #     echo "ARTIFACT_NAME=$(basename $FILE)" >> $GITHUB_ENV
 
-      # - name: Locate macOS Build
+      # - name: Locate Build Artifact (macOS)
       #   if: matrix.os == 'macos-latest'
       #   run: |
-      #     FILE=$(find src-tauri/target/release -type f \( -name "*.dmg" -o -name "*.app" \) | head -n 1)
+      #     FILE=$(find genhat-desktop/src-tauri/target/release -type f \( -name "*.dmg" -o -name "*.app" \) | head -n 1)
       #     echo "ARTIFACT_PATH=$FILE" >> $GITHUB_ENV
       #     echo "ARTIFACT_NAME=$(basename $FILE)" >> $GITHUB_ENV
 
       # Setup rclone for Google Drive
-      - name: Install rclone
+      - name: Install rclone (Windows)
+        if: matrix.os == 'windows-latest'
         run: choco install rclone -y
+
+      # - name: Install rclone (Linux)
+      #   if: matrix.os == 'ubuntu-latest'
+      #   run: sudo apt install -y rclone
+
+      # - name: Install rclone (macOS)
+      #   if: matrix.os == 'macos-latest'
+      #   run: brew install rclone
 
       - name: Configure rclone
         run: |
@@ -83,7 +99,7 @@ jobs:
             scope=drive.file `
             service_account_file=service-account.json
 
-      # Upload to Google Drive
+      # Upload to Google Drive — AppFiles/Releases/<OS>
       - name: Upload to Google Drive
         run: |
-          rclone copy "${{ env.ARTIFACT_PATH }}" gdrive:tauri-builds/windows/ --progress
+          rclone copy "${{ env.ARTIFACT_PATH }}" "gdrive:AppFiles/Releases/${{ matrix.drive_folder }}" --progress

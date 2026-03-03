@@ -3,7 +3,6 @@
     "resources": {
       "bin/llama-win/*": "bin/llama-win/",
       "bin/pdfium-win/*": "bin/pdfium-win/",
-      "bin/tts-win/tts-inference/*": "bin/tts-win/tts-inference/",
       "bin/espeak-ng-win/*": "bin/espeak-ng-win/",
       "bin/espeak-ng-win/espeak-ng-data/*": "bin/espeak-ng-win/espeak-ng-data/",
       "bin/espeak-ng-win/espeak-ng-data/lang/gmw/*": "bin/espeak-ng-win/espeak-ng-data/lang/gmw/",

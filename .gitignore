@@ -19,8 +19,6 @@ models/Famino-12B
 !models/Famino-12B/.gitkeep
 
 # App's binary files and build/dist directories
-genhat-desktop/src-tauri/bin/tts*
-genhat-desktop/src-tauri/bin/tts*/tts-inference
 build/
 dist/
 

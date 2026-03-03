@@ -61,8 +61,9 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $bundleDir = "genhat-desktop/src-tauri/target/release/bundle"
+          $bundleDir = Join-Path $env:GITHUB_WORKSPACE "genhat-desktop/src-tauri/target/release/bundle"
           $file = Get-ChildItem -Path $bundleDir -Recurse -Include "*.exe","*.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $file) { Write-Error "No installer found in $bundleDir"; exit 1 }
           echo "ARTIFACT_PATH=$($file.FullName)" >> $env:GITHUB_ENV
           echo "ARTIFACT_NAME=$($file.Name)" >> $env:GITHUB_ENV
 

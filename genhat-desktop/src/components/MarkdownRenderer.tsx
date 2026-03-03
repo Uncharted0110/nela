@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
+import rehypeRaw from "rehype-raw";
 import type { Components } from "react-markdown";
 
 interface MarkdownRendererProps {
@@ -125,15 +126,38 @@ const markdownComponents: Components = {
   },
 };
 
+/**
+ * Pre-process markdown so that table cells render correctly:
+ *  - Convert literal "<br>" text to actual <br/> tags
+ *  - Turn "- item" bullet patterns inside table cells into bullet characters
+ *    separated by <br/> since markdown lists can't nest inside GFM table cells.
+ */
+function preprocessMarkdown(md: string): string {
+  return md.replace(
+    // Match a full GFM table row: | cell | cell | ...
+    /^(\|.+\|)$/gm,
+    (_match, row: string) => {
+      return row
+        // Literal <br> / <br/> / <br /> (case-insensitive) → real line-break tag
+        .replace(/<br\s*\/?>/gi, "<br/>")
+        // "- text" bullet pattern → bullet character (with line break before it
+        // unless it's at the very start of the cell)
+        .replace(/(?<=\|\s*)-\s+/g, "• ")
+        .replace(/<br\/>\s*-\s+/g, "<br/>• ");
+    }
+  );
+}
+
 const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) => {
+  const processed = preprocessMarkdown(content);
   return (
     <div className="markdown-body">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
+        rehypePlugins={[rehypeRaw, rehypeHighlight]}
         components={markdownComponents}
       >
-        {content}
+        {processed}
       </ReactMarkdown>
     </div>
   );

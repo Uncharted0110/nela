@@ -644,19 +644,23 @@ impl RagPipeline {
 
     /// Full RAG query: classify → HyDE → hybrid search → RRF → context build → generate.
     pub async fn query(&self, user_query: &str, top_k: usize) -> Result<RagResult, String> {
-        // 0. Classify the query to decide retrieval strategy
-        let query_class = self.classify_query(user_query).await;
         let doc_count = self.db.document_count().unwrap_or(0);
-        log::info!(
-            "Query classified as: {} (docs in DB: {}, vec_index: {} vectors)",
-            query_class, doc_count, self.vec_index.len()
-        );
 
-        // Skip retrieval ONLY if classifier says no_retrieval AND there are no
-        // documents ingested.  When the user has ingested content we should
-        // always attempt retrieval — generic questions like "what is in the
-        // document" are intended to hit the knowledge base.
-        if query_class == "no_retrieval" && doc_count == 0 {
+        // If no documents are ingested, skip classifier entirely — always no_retrieval
+        let skip_retrieval = if doc_count == 0 {
+            log::info!("No documents in DB — skipping classifier, using no_retrieval");
+            true
+        } else {
+            // Classify and skip retrieval only if no_retrieval confidence > 90%
+            let (query_class, confidence) = self.classify_query(user_query).await;
+            log::info!(
+                "Query classified as: {} ({:.1}%) (docs in DB: {}, vec_index: {} vectors)",
+                query_class, confidence * 100.0, doc_count, self.vec_index.len()
+            );
+            query_class == "no_retrieval" && confidence > 0.9
+        };
+
+        if skip_retrieval {
             let chat_request = tasks::chat_request(user_query);
             let answer = match self.router.route(&chat_request).await {
                 Ok(TaskResponse::Text(text)) => text,
@@ -859,16 +863,22 @@ impl RagPipeline {
         user_query: &str,
         top_k: usize,
     ) -> Result<RetrievalResult, String> {
-        // 0. Classify the query to decide retrieval strategy
-        let query_class = self.classify_query(user_query).await;
         let doc_count = self.db.document_count().unwrap_or(0);
-        log::info!(
-            "Query classified as: {} (streaming, docs={}, vec={})",
-            query_class, doc_count, self.vec_index.len()
-        );
 
-        // Only skip retrieval when no documents exist
-        if query_class == "no_retrieval" && doc_count == 0 {
+        // If no documents are ingested, skip classifier entirely — always no_retrieval
+        let skip_retrieval = if doc_count == 0 {
+            log::info!("[stream] No documents in DB — skipping classifier, using no_retrieval");
+            true
+        } else {
+            let (query_class, confidence) = self.classify_query(user_query).await;
+            log::info!(
+                "[stream] Query classified as: {} ({:.1}%) (docs={}, vec={})",
+                query_class, confidence * 100.0, doc_count, self.vec_index.len()
+            );
+            query_class == "no_retrieval" && confidence > 0.9
+        };
+
+        if skip_retrieval {
             return Ok(RetrievalResult {
                 sources: vec![],
                 augmented_prompt: String::new(),
@@ -1234,37 +1244,38 @@ impl RagPipeline {
     /// Classify a query to determine the retrieval strategy.
     /// Returns: "no_retrieval", "simple_rag", "multi_doc", or "summarization".
     /// Falls back to "simple_rag" if the classifier is unavailable.
-    async fn classify_query(&self, query: &str) -> String {
+    /// Classify a query, returning `(label, confidence)`.
+    async fn classify_query(&self, query: &str) -> (String, f32) {
         let request = tasks::classify_request(query);
         match self.router.route(&request).await {
             Ok(TaskResponse::Classification { label, confidence }) => {
                 log::debug!("Query classified as '{}' (confidence: {:.2})", label, confidence);
                 if confidence < 0.5 {
-                    "simple_rag".to_string()
+                    ("simple_rag".to_string(), confidence)
                 } else {
-                    label
+                    (label, confidence)
                 }
             }
             Ok(TaskResponse::Text(text)) => {
                 // Fallback: parse text response as label
                 let lower = text.trim().to_lowercase();
                 if lower.contains("no_retrieval") {
-                    "no_retrieval".to_string()
+                    ("no_retrieval".to_string(), 1.0)
                 } else if lower.contains("multi_doc") {
-                    "multi_doc".to_string()
+                    ("multi_doc".to_string(), 1.0)
                 } else if lower.contains("summarization") {
-                    "summarization".to_string()
+                    ("summarization".to_string(), 1.0)
                 } else {
-                    "simple_rag".to_string()
+                    ("simple_rag".to_string(), 1.0)
                 }
             }
             Ok(_) => {
                 log::warn!("Query classification returned unexpected response type");
-                "simple_rag".to_string()
+                ("simple_rag".to_string(), 0.0)
             }
             Err(e) => {
                 log::warn!("Query classification failed: {e}");
-                "simple_rag".to_string()
+                ("simple_rag".to_string(), 0.0)
             }
         }
     }

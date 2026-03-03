@@ -1581,6 +1581,16 @@ body {
   padding: 8px 14px;
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-primary);
+  line-height: 1.6;
+  white-space: normal;
+  word-wrap: break-word;
+}
+
+/* Allow <br> tags to create visible line breaks inside table cells */
+.md-table td br {
+  display: block;
+  content: "";
+  margin-top: 2px;
 }
 
 .md-table tr:last-child td {

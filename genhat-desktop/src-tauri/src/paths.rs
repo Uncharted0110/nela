@@ -128,9 +128,10 @@ pub fn resolve_bundled_library(os_folder: &str, lib_name: &str) -> Result<PathBu
 ///
 /// Search order:
 ///   1. `GENHAT_MODEL_PATH` environment variable
-///   2. `models/` next to the running executable (or inside exe_dir on Windows)
-///   3. Tauri resource dir + `models/` (Linux: `/usr/lib/GenHat/models/`)
-///   4. Dev fallback: `../../models` relative to CARGO_MANIFEST_DIR
+///   2. (debug only) Dev workspace `../../models` relative to CARGO_MANIFEST_DIR
+///   3. `models/` next to the running executable
+///   4. Tauri resource dir + `models/` (Linux: `/usr/lib/GenHat/models/`)
+///   5. Fallback: return the Tauri resource path even if empty
 pub fn resolve_models_dir() -> PathBuf {
     // 1. Explicit override
     if let Ok(val) = std::env::var("GENHAT_MODEL_PATH") {
@@ -144,15 +145,29 @@ pub fn resolve_models_dir() -> PathBuf {
         }
     }
 
+    // 2. Dev fallback — only compiled into debug builds.
+    //    Checked early so it wins over the empty placeholder dirs
+    //    that Tauri copies next to the debug binary.
+    #[cfg(debug_assertions)]
+    {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let dev_models = manifest_dir.join("../../models");
+        if let Ok(canonical) = dev_models.canonicalize() {
+            if canonical.is_dir() {
+                return canonical;
+            }
+        }
+    }
+
     if let Ok(exe) = std::env::current_exe() {
         if let Some(exe_dir) = exe.parent() {
-            // 2. Sibling of the executable
+            // 3. Sibling of the executable
             let candidate = exe_dir.join("models");
             if candidate.is_dir() {
                 return candidate;
             }
 
-            // 3. Tauri resource dir (Linux: ../lib/GenHat/models/)
+            // 4. Tauri resource dir (Linux: ../lib/GenHat/models/)
             if cfg!(target_os = "linux") {
                 let candidate = exe_dir
                     .join("..")
@@ -178,7 +193,7 @@ pub fn resolve_models_dir() -> PathBuf {
         }
     }
 
-    // 4. No models directory found — return the Tauri resource path
+    // 5. No models directory found — return the Tauri resource path
     //    even if it doesn't exist yet (the user will add models there).
     if let Ok(exe) = std::env::current_exe() {
         if let Some(exe_dir) = exe.parent() {

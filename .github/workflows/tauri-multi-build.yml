@@ -56,12 +56,13 @@ jobs:
         run: npx tauri build
         working-directory: genhat-desktop
 
-      # Locate Build Artifact (Windows)
+      # Locate Build Artifact (Windows) — installer only, from bundle/nsis and bundle/msi
       - name: Locate Build Artifact (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $file = Get-ChildItem -Path genhat-desktop/src-tauri/target/release -Recurse -Include *.exe,*.msi | Select-Object -First 1
+          $bundleDir = "genhat-desktop/src-tauri/target/release/bundle"
+          $file = Get-ChildItem -Path "$bundleDir/nsis","$bundleDir/msi" -Include *.exe,*.msi -ErrorAction SilentlyContinue | Select-Object -First 1
           echo "ARTIFACT_PATH=$($file.FullName)" >> $env:GITHUB_ENV
           echo "ARTIFACT_NAME=$($file.Name)" >> $env:GITHUB_ENV
 

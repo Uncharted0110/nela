@@ -65,6 +65,8 @@ jobs:
 
       # Build Tauri
       - name: Build Tauri App
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
         run: npx tauri build
         working-directory: genhat-desktop
 

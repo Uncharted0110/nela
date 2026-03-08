@@ -98,7 +98,7 @@ pub fn phonemize(text: &str) -> Result<String, String> {
         cmd = Command::new("espeak-ng");
     }
 
-    cmd.args(["--ipa", "-v", "en-us", "-q", "--punct"]);
+    cmd.args(["--ipa", "-v", "en-us", "-q"]);
     cmd.arg(text);
 
     let output = cmd.output().map_err(|e| {

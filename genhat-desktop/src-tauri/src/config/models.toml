@@ -38,7 +38,7 @@ priority = 20
 memory_mb = 1400
 
 [models.params]
-ctx_size = "4096"
+ctx_size = "16384"
 port = "0"
 max_tokens = "256"
 temp = "0.7"
@@ -46,16 +46,16 @@ top_p = "0.9"
 top_k = "40"
 repeat_penalty = "1.1"
 
-# ── LLM: Famino-12B (llama-server) ───────────────────────────────────────────
+# ── LLM: Qwen3.5-4B (llama-server) ───────────────────────────────────────────
 # Primary chat/RAG model (larger, higher quality). Does NOT handle enrichment
 # (which runs in background and would block the large model).
 
 [[models]]
-id = "famino-12-b"
-name = "Famino 12B INT2"
+id = "qwen3.5-4-b"
+name = "Qwen3.5 12B INT4"
 backend = "llama_server"
 kind = "child_process"
-model_file = "LLM/Famino-12B-Model_Stock.Q2_K.gguf"
+model_file = "LLM/Qwen3.5-4B-Q4_K_M.gguf"
 tasks = ["chat", "summarize", "mindmap", "hyde"]
 auto_start = false
 max_instances = 2

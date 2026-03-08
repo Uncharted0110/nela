@@ -215,6 +215,7 @@ static RE_CURRENCY: LazyLock<fancy_regex::Regex> = LazyLock::new(|| fancy_regex:
 static RE_TIME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?\b").unwrap());
 static RE_RANGE: LazyLock<fancy_regex::Regex> = LazyLock::new(|| fancy_regex::Regex::new(r"(?<!\w)(\d+)-(\d+)(?!\w)").unwrap());
 static RE_MODEL_VER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b([a-zA-Z][a-zA-Z0-9]*)-(\d[\d.]*)(?:$|[^\d.])").unwrap());
+static RE_ACRONYM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b([A-Z]{2,})(s?)\b").unwrap());
 static RE_UNIT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(\d+(?:\.\d+)?)\s*(km|kg|mg|ml|gb|mb|kb|tb|hz|khz|mhz|ghz|mph|kph|°[cCfF]|[cCfF]°|ms|ns|µs)\b").unwrap()
 });
@@ -323,6 +324,21 @@ fn expand_ranges(text: &str) -> String {
 fn expand_model_names(text: &str) -> String {
     RE_MODEL_VER.replace_all(text, |caps: &regex::Captures| {
         format!("{} {}", &caps[1], &caps[2])
+    }).to_string()
+}
+
+/// Expands uppercase acronyms so espeak-ng reads each letter individually.
+/// e.g. "PDF" → "P D F", "PDFs" → "P D F s"
+/// Must run before lowercasing so the all-caps pattern is still detectable.
+fn expand_acronyms(text: &str) -> String {
+    RE_ACRONYM.replace_all(text, |caps: &regex::Captures| {
+        let letters: Vec<String> = caps[1].chars().map(|c| c.to_string()).collect();
+        let plural = &caps[2];
+        if plural.is_empty() {
+            letters.join(" ")
+        } else {
+            format!("{} s", letters.join(" "))
+        }
     }).to_string()
 }
 
@@ -566,6 +582,7 @@ impl TextPreprocessor {
         text = expand_phone_numbers(&text);
         text = expand_ranges(&text);
         text = expand_model_names(&text);
+        text = expand_acronyms(&text);
 
         // Replace remaining bare numbers
         text = replace_numbers(&text);

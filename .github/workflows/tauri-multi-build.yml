@@ -41,6 +41,7 @@ jobs:
 
       - name: Get latest tag
         id: tag
+        shell: bash
         run: |
           git fetch --tags
           TAG=$(git describe --tags --abbrev=0)

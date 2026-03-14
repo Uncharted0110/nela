@@ -49,6 +49,11 @@ export const Api = {
     return invoke<number>("get_memory_usage");
   },
 
+  /** Get a workspace identifier (cwd) for scoping local UI persistence. */
+  async getWorkspaceScope(): Promise<string> {
+    return invoke<string>("get_workspace_scope");
+  },
+
   /** Manually start (pre-warm) a model by ID. */
   async startModel(modelId: string): Promise<string> {
     return invoke<string>("start_model", { modelId });

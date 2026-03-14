@@ -26,11 +26,14 @@ import type {
 import { KITTEN_TTS_VOICES } from "./types";
 import ChatWindow from "./components/ChatWindow";
 import ChatTabBar from "./components/ChatTabBar";
+import ChatHistorySidebar from "./components/ChatHistorySidebar";
 import ModelSelector from "./components/ModelSelector";
 import PdfViewer from "./components/PdfViewer";
 import DocumentViewer from "./components/DocumentViewer";
 import PodcastTab from "./components/PodcastTab";
 import "./App.css";
+
+const SESSION_STORAGE_PREFIX = "genhat:sessions:v1:";
 
 /** Extensions the DocumentViewer can render (non-PDF). */
 const VIEWABLE_EXTS = new Set([
@@ -90,6 +93,30 @@ function deriveTitleFromMessage(text: string): string {
   return trimmed.length > 32 ? trimmed.slice(0, 32) + "…" : trimmed || "New Chat";
 }
 
+/** Ensure persisted sessions are safely shaped after loading from localStorage. */
+function normalizeSession(raw: Partial<ChatSession>): ChatSession {
+  const messages = Array.isArray(raw.messages)
+    ? raw.messages.filter((m): m is ChatMessage =>
+      !!m &&
+      (m.role === "user" || m.role === "assistant" || m.role === "system") &&
+      typeof m.content === "string"
+    )
+    : [];
+
+  return {
+    id: typeof raw.id === "string" && raw.id ? raw.id : crypto.randomUUID(),
+    title: typeof raw.title === "string" && raw.title ? raw.title : "New Chat",
+    messages,
+    streamingContent: "",
+    loading: false,
+    audioOutput: typeof raw.audioOutput === "string" ? raw.audioOutput : "",
+    cancelled: false,
+    ragResult: raw.ragResult ?? null,
+    mediaAssets: raw.mediaAssets ?? {},
+    createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
+  };
+}
+
 function App() {
   // ── Model state ────────────────────────────────────────────────────────────
   const [models, setModels] = useState<ModelFile[]>([]);
@@ -122,8 +149,11 @@ function App() {
 
   // ── Multi-session chat state ───────────────────────────────────────────────
   const [chatMode, setChatMode] = useState<ChatMode>("text");
+  const [workspaceScope, setWorkspaceScope] = useState<string | null>(null);
+  const [sessionStoreReady, setSessionStoreReady] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>(() => [createEmptySession()]);
-  const [activeSessionId, setActiveSessionId] = useState<string>(() => sessions[0]?.id ?? "");
+  const [openSessionIds, setOpenSessionIds] = useState<string[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string>("");
   /** AbortControllers keyed by session ID — persists across renders. */
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
 
@@ -140,11 +170,12 @@ function App() {
   // ── Right sidebar (Knowledge Base) ─────────────────────────────────────────
   const [docPanelOpen, setDocPanelOpen] = useState(false);
   const [modeSwitchNotice, setModeSwitchNotice] = useState<string | null>(null);
+  const modeSwitchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // ── Session accessor helpers ───────────────────────────────────────────────
 
   /** Get the currently active session object (read-only snapshot). */
-  const activeSession: ChatSession = sessions.find((s) => s.id === activeSessionId) ?? sessions[0];
+  const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
 
   /** Immutably update a specific session by ID. */
   const updateSession = useCallback(
@@ -172,8 +203,38 @@ function App() {
   const addNewSession = useCallback(() => {
     const newSession = createEmptySession();
     setSessions((prev) => [...prev, newSession]);
+    setOpenSessionIds((prev) => [...prev, newSession.id]);
     setActiveSessionId(newSession.id);
   }, []);
+
+  /** Open a chat from history into the top viewer tabs and activate it. */
+  const openSessionInViewer = useCallback((sessionId: string) => {
+    setOpenSessionIds((prev) => (prev.includes(sessionId) ? prev : [...prev, sessionId]));
+    setActiveSessionId(sessionId);
+  }, []);
+
+  /** Close only the viewer tab (does not delete chat history). */
+  const closeViewerTab = useCallback(
+    (sessionId: string) => {
+      setOpenSessionIds((prev) => {
+        if (!prev.includes(sessionId)) return prev;
+        const next = prev.filter((id) => id !== sessionId);
+
+        if (activeSessionId === sessionId) {
+          if (next.length === 0) {
+            setActiveSessionId("");
+          } else {
+            const closedIdx = prev.findIndex((id) => id === sessionId);
+            const nextIdx = Math.min(closedIdx, next.length - 1);
+            setActiveSessionId(next[nextIdx]);
+          }
+        }
+
+        return next;
+      });
+    },
+    [activeSessionId]
+  );
 
   /** Close a session by ID. If it's the last one, create a fresh session. */
   const closeSession = useCallback(
@@ -184,9 +245,11 @@ function App() {
 
       setSessions((prev) => {
         const remaining = prev.filter((s) => s.id !== sessionId);
+        setOpenSessionIds((openPrev) => openPrev.filter((id) => id !== sessionId));
         if (remaining.length === 0) {
           // Last tab closed — create a fresh one
           const fresh = createEmptySession();
+          setOpenSessionIds([fresh.id]);
           setActiveSessionId(fresh.id);
           return [fresh];
         }
@@ -202,9 +265,9 @@ function App() {
     [activeSessionId]
   );
 
-  /** Reorder sessions (called from drag-and-drop in the tab bar). */
-  const reorderSessions = useCallback((reordered: ChatSession[]) => {
-    setSessions(reordered);
+  /** Reorder only open viewer tabs (VS Code style). */
+  const reorderViewerTabs = useCallback((reordered: ChatSession[]) => {
+    setOpenSessionIds(reordered.map((s) => s.id));
   }, []);
 
   // ── PDF Viewer state ───────────────────────────────────────────────────────
@@ -220,7 +283,7 @@ function App() {
     title: string;
   } | null>(null);
 
-  // ── Keyboard shortcut: Ctrl+T to open a new tab ──────────────────────────
+  // ── Keyboard shortcut: Ctrl+T to open a new chat ──────────────────────────
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "t") {
@@ -243,6 +306,141 @@ function App() {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Resolve workspace scope key once so session history is isolated per workspace.
+  useEffect(() => {
+    let cancelled = false;
+    Api.getWorkspaceScope()
+      .then((scope) => {
+        if (!cancelled) {
+          setWorkspaceScope(scope || "workspace:default");
+        }
+      })
+      .catch((err) => {
+        console.warn("Failed to resolve workspace scope, using fallback:", err);
+        if (!cancelled) {
+          setWorkspaceScope("workspace:default");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Restore persisted chat sessions for the active workspace.
+  useEffect(() => {
+    if (!workspaceScope) return;
+
+    try {
+      const storageKey = `${SESSION_STORAGE_PREFIX}${workspaceScope}`;
+      const raw = localStorage.getItem(storageKey);
+
+      if (!raw) {
+        const fresh = createEmptySession();
+        setSessions([fresh]);
+        setOpenSessionIds([fresh.id]);
+        setActiveSessionId(fresh.id);
+        setSessionStoreReady(true);
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as {
+        sessions?: Partial<ChatSession>[];
+        activeSessionId?: string;
+        openSessionIds?: string[];
+      };
+      const loaded = Array.isArray(parsed.sessions)
+        ? parsed.sessions.map(normalizeSession)
+        : [];
+
+      if (loaded.length === 0) {
+        const fresh = createEmptySession();
+        setSessions([fresh]);
+        setOpenSessionIds([fresh.id]);
+        setActiveSessionId(fresh.id);
+      } else {
+        setSessions(loaded);
+        const nextActive =
+          parsed.activeSessionId && loaded.some((s) => s.id === parsed.activeSessionId)
+            ? parsed.activeSessionId
+            : loaded[0].id;
+        const restoredOpen = Array.isArray(parsed.openSessionIds)
+          ? parsed.openSessionIds.filter((id) => loaded.some((s) => s.id === id))
+          : [];
+        setOpenSessionIds(restoredOpen.length > 0 ? restoredOpen : [nextActive]);
+        setActiveSessionId(nextActive);
+      }
+    } catch (err) {
+      console.error("Failed to restore workspace sessions:", err);
+      const fresh = createEmptySession();
+      setSessions([fresh]);
+      setActiveSessionId(fresh.id);
+    } finally {
+      setSessionStoreReady(true);
+    }
+  }, [workspaceScope]);
+
+  // Persist sessions whenever they change, scoped to the current workspace.
+  useEffect(() => {
+    if (!workspaceScope || !sessionStoreReady || sessions.length === 0) return;
+
+    const safeActive = sessions.some((s) => s.id === activeSessionId)
+      ? activeSessionId
+      : sessions[0].id;
+
+    const storageKey = `${SESSION_STORAGE_PREFIX}${workspaceScope}`;
+    localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        sessions,
+        activeSessionId: safeActive,
+        openSessionIds,
+      })
+    );
+  }, [workspaceScope, sessionStoreReady, sessions, activeSessionId, openSessionIds]);
+
+  // Keep active session aligned with currently open viewer tabs.
+  useEffect(() => {
+    if (openSessionIds.length === 0) {
+      if (activeSessionId) setActiveSessionId("");
+      return;
+    }
+
+    const isActiveOpen = openSessionIds.includes(activeSessionId);
+    if (!isActiveOpen) {
+      setActiveSessionId(openSessionIds[0]);
+    }
+  }, [openSessionIds, activeSessionId]);
+
+  // Keep open viewer tabs valid if chat history changes.
+  useEffect(() => {
+    if (sessions.length === 0) return;
+    setOpenSessionIds((prev) => {
+      const valid = prev.filter((id) => sessions.some((s) => s.id === id));
+      return valid.length > 0 ? valid : [sessions[0].id];
+    });
+  }, [sessions]);
+
+  // Clear one-time mode notice after a short duration.
+  useEffect(() => {
+    if (!modeSwitchNotice) return;
+    if (modeSwitchTimeoutRef.current) clearTimeout(modeSwitchTimeoutRef.current);
+    modeSwitchTimeoutRef.current = setTimeout(() => {
+      setModeSwitchNotice(null);
+      modeSwitchTimeoutRef.current = null;
+    }, 1800);
+    return () => {
+      if (modeSwitchTimeoutRef.current) {
+        clearTimeout(modeSwitchTimeoutRef.current);
+      }
+    };
+  }, [modeSwitchNotice]);
+
+  // Never carry mode-switch text into another chat tab.
+  useEffect(() => {
+    setModeSwitchNotice(null);
+  }, [activeSessionId]);
 
   // Reload RAG docs periodically when in text mode
   useEffect(() => {
@@ -467,6 +665,7 @@ function App() {
 
   const handleCancel = () => {
     const sid = activeSessionId;
+    if (!sid) return;
     // Abort the SSE fetch (text / RAG modes)
     abortControllersRef.current.get(sid)?.abort();
     abortControllersRef.current.delete(sid);
@@ -896,7 +1095,7 @@ function App() {
     if (mode === chatMode) return;
 
     // Preserve existing behavior: stop any active generation before switching mode.
-    if (activeSession.loading) {
+    if (activeSession?.loading) {
       handleCancel();
     }
 
@@ -932,20 +1131,30 @@ function App() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   const currentModeConfig = MODE_CONFIG.find((m) => m.mode === chatMode)!;
+  const openViewerSessions = openSessionIds
+    .map((id) => sessions.find((s) => s.id === id))
+    .filter((s): s is ChatSession => !!s);
 
   return (
     <div className="flex h-full w-full">
+      <ChatHistorySidebar
+        sessions={sessions}
+        activeSessionId={activeSessionId}
+        onSelectSession={openSessionInViewer}
+        onNewSession={addNewSession}
+        onDeleteSession={closeSession}
+      />
+
       {/* ══════════ MAIN CONTENT ══════════ */}
       <main className="flex-1 flex flex-col bg-void-900 min-w-0 relative">
-        {/* ── Tab Bar (multi-session) ── */}
         {chatMode !== "podcast" && (
           <ChatTabBar
-            sessions={sessions}
+            sessions={openViewerSessions}
             activeSessionId={activeSessionId}
             onSelectSession={setActiveSessionId}
             onNewSession={addNewSession}
-            onCloseSession={closeSession}
-            onReorderSessions={reorderSessions}
+            onCloseSession={closeViewerTab}
+            onReorderSessions={reorderViewerTabs}
           />
         )}
 
@@ -974,7 +1183,7 @@ function App() {
                     value={selectedTtsEngine}
                     onChange={(e) => setSelectedTtsEngine(e.target.value)}
                     className="bg-void-700 text-txt border border-glass-border rounded-lg py-1.5 pl-3.5 pr-8 font-inherit text-sm outline-none cursor-pointer appearance-none transition-all duration-200 min-w-[160px] hover:border-neon"
-                    disabled={activeSession.loading}
+                    disabled={activeSession?.loading ?? false}
                   >
                     {ttsEngines.map((m) => (
                       <option key={m.id} value={m.id}>{m.name}</option>
@@ -990,7 +1199,7 @@ function App() {
                         value={ttsVoice}
                         onChange={(e) => setTtsVoice(e.target.value as KittenTtsVoice)}
                         className="bg-void-700 text-txt border border-glass-border rounded-lg py-1.5 pl-3.5 pr-8 font-inherit text-sm outline-none cursor-pointer appearance-none transition-all duration-200 min-w-[100px] hover:border-neon"
-                        disabled={activeSession.loading}
+                        disabled={activeSession?.loading ?? false}
                       >
                         {KITTEN_TTS_VOICES.map((v) => (
                           <option key={v} value={v}>{v}</option>
@@ -1008,7 +1217,7 @@ function App() {
                         value={ttsSpeed}
                         onChange={(e) => setTtsSpeed(parseFloat(e.target.value))}
                         className="w-[72px] h-1 accent-neon cursor-pointer"
-                        disabled={activeSession.loading}
+                        disabled={activeSession?.loading ?? false}
                       />
                     </div>
                   </>
@@ -1021,7 +1230,7 @@ function App() {
                   value={selectedVisionModel}
                   onChange={(e) => setSelectedVisionModel(e.target.value)}
                   className="bg-void-700 text-txt border border-glass-border rounded-lg py-1.5 pl-3.5 pr-8 font-inherit text-sm outline-none cursor-pointer appearance-none transition-all duration-200 min-w-[160px] hover:border-neon"
-                  disabled={activeSession.loading}
+                  disabled={activeSession?.loading ?? false}
                 >
                   {visionModels.map((m) => (
                     <option key={m.id} value={m.id}>{m.name}</option>
@@ -1041,6 +1250,10 @@ function App() {
             currentMode={chatMode}
             onSelectMode={handleModeSwitch}
           />
+        ) : !activeSession ? (
+          <div className="flex-1 flex items-center justify-center text-txt-muted text-sm">
+            Open a chat from the left sidebar or create a new chat.
+          </div>
         ) : (
           <ChatWindow
             key={activeSession.id}
@@ -1180,7 +1393,7 @@ function App() {
           </div>
 
           {/* RAG Source Citations */}
-          {activeSession.ragResult && activeSession.ragResult.sources.length > 0 && (
+          {activeSession?.ragResult && activeSession.ragResult.sources.length > 0 && (
             <div className="kb-sidebar-sources border-t border-glass-border py-3 px-3 shrink-0 max-h-[250px] overflow-y-auto">
               <div className="flex items-center gap-1.5 mb-2 text-[0.82rem] text-txt-secondary">
                 <FileText size={14} />

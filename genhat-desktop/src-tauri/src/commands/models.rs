@@ -217,6 +217,14 @@ pub async fn get_memory_usage(
     Ok(state.0.memory_usage().await)
 }
 
+/// Return the current working directory so frontend state can be scoped per workspace.
+#[tauri::command]
+pub fn get_workspace_scope() -> Result<String, String> {
+    std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .map_err(|e| format!("Failed to read current workspace directory: {e}"))
+}
+
 // ── Helper ──────────────────────────────────────────────────────────────────
 
 /// Resolve the models directory.

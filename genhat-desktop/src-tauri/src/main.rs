@@ -112,6 +112,7 @@ fn main() {
             app_lib::commands::models::stop_model,
             app_lib::commands::models::get_llama_port,
             app_lib::commands::models::get_memory_usage,
+            app_lib::commands::models::get_workspace_scope,
             app_lib::commands::models::read_image_base64,
             app_lib::commands::inference::route_request,
             app_lib::commands::inference::vision_chat,
